@@ -3,6 +3,16 @@ import { z } from 'zod';
 import * as crypto from 'crypto';
 import { can, WorkItemContext, UserContext, Action } from '../../../shared/src/policy';
 
+// Business-logic error used inside withIdempotency handlers.
+// Throwing this ensures the transaction (including the idempotency key insert)
+// is rolled back, and a proper HTTP response is sent. Never call reply.send()
+// directly inside a withIdempotency handler — always throw AppError instead.
+class AppError extends Error {
+  constructor(public statusCode: number, public body: any) {
+    super(body?.error?.message || 'Application error');
+  }
+}
+
 export default async function workItemsRoutes(fastify: FastifyInstance) {
   const pool = (fastify as any).db;
 
@@ -54,21 +64,28 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
         throw err;
       }
 
-      // Execute actual business logic inside transaction
+      // Execute business logic. Handlers MUST throw AppError on failure
+      // so this transaction (including the idempotency key) is rolled back.
       const response = await handler(client);
       
-      // Update idempotency key with response
-      const status = reply.statusCode || 200;
+      // Only reached on success — store the 200 response for future replays
       await client.query(`
         UPDATE idempotency_keys 
-        SET response_status = $1, response_body = $2
-        WHERE key = $3 AND user_id = $4
-      `, [status, response, key, userId]);
+        SET response_status = 200, response_body = $1
+        WHERE key = $2 AND user_id = $3
+      `, [response, key, userId]);
 
       await client.query('COMMIT');
       return response;
     } catch (err) {
-      await client.query('ROLLBACK');
+      // ROLLBACK may fail if the connection is dead — Postgres auto-rolls back
+      // severed connections, so swallow the error.
+      await client.query('ROLLBACK').catch(() => {});
+      if (err instanceof AppError) {
+        // Business error: tx rolled back, idempotency key NOT persisted.
+        // Client can safely retry with the same key.
+        return reply.status(err.statusCode).send(err.body);
+      }
       throw err;
     } finally {
       client.release();
@@ -90,8 +107,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const user = req.user as UserContext;
 
       if (!can(user, 'create_item', { team_id: input.team_id })) {
-        reply.status(403);
-        throw new Error('Forbidden');
+        throw new AppError(403, { error: { code: 'FORBIDDEN', message: 'Forbidden' } });
       }
 
       const { rows } = await client.query(`
@@ -102,7 +118,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
 
       const item = rows[0];
 
-      // Add event
+      // Add event + outbox job atomically in the same transaction
       const eventRes = await client.query(`
         INSERT INTO events (work_item_id, team_id, actor_id, type, payload)
         VALUES ($1, $2, $3, $4, $5) RETURNING id
@@ -110,8 +126,6 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       await client.query(`
         INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
       `, [eventRes.rows[0].id, {}]);
-
-      // We should also add a job here, but that is Phase 3! We can add a placeholder or skip for now.
 
       return item;
     });
@@ -137,6 +151,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
     
     const item = rows[0];
     const user = req.user as UserContext;
+    // Cross-team → 404, not 403, so we don't leak item existence
     if (!can(user, 'view', item)) return reply.status(404).send({ error: { message: 'Not found' } });
 
     item.allowedActions = getAllowedActions(user, item);
@@ -148,8 +163,9 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
     const user = req.user as UserContext;
     const { team_id, status, priority, assignee_id, type, overdue, q, cursor, limit = 50 } = req.query as any;
 
+    // Cross-team → 404 (do not leak existence)
     if (!team_id || !user.memberships[team_id]) {
-      return reply.status(403).send({ error: { message: 'Forbidden: Valid team_id required' } });
+      return reply.status(404).send({ error: { message: 'Not found' } });
     }
 
     let query = 'SELECT * FROM work_items WHERE team_id = $1';
@@ -270,7 +286,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       item.allowedActions = getAllowedActions(user, item);
       return item;
     } catch (e) {
-      await client.query('ROLLBACK');
+      await client.query('ROLLBACK').catch(() => {});
       throw e;
     } finally {
       client.release();
@@ -283,12 +299,14 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const { id } = req.params as { id: string };
       const user = req.user as UserContext;
 
-      // Select without lock first to check policy
-      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1', [id]);
-      if (rows.length === 0) return reply.status(404).send({ error: { message: 'Not found' } });
-      if (!can(user, 'claim', rows[0])) return reply.status(403).send({ error: { message: 'Forbidden' } });
+      // FOR UPDATE ensures the policy check sees a consistent snapshot
+      // that won't change before the atomic UPDATE below.
+      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
+      if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
+      if (!can(user, 'claim', rows[0])) throw new AppError(403, { error: { message: 'Forbidden' } });
 
-      // Atomic claim
+      // Atomic claim — the WHERE assignee_id IS NULL guard is the real
+      // concurrency control. Only one concurrent caller wins.
       const updateRes = await client.query(`
         UPDATE work_items 
         SET assignee_id = $1, version = version + 1, updated_at = NOW()
@@ -297,9 +315,11 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       `, [user.id, id]);
 
       if (updateRes.rows.length === 0) {
-        // Someone else claimed it or it doesn't exist anymore
+        // Someone else claimed it between our FOR UPDATE read and now
+        // (possible if FOR UPDATE was released by a savepoint or if the
+        // item was updated by a DDL — belt-and-suspenders).
         const current = await client.query('SELECT assignee_id FROM work_items WHERE id = $1', [id]);
-        return reply.status(409).send({ 
+        throw new AppError(409, { 
           error: { code: 'CONFLICT', message: 'Already assigned', assignee_id: current.rows[0]?.assignee_id } 
         });
       }
@@ -324,9 +344,9 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const { id } = req.params as { id: string };
       const user = req.user as UserContext;
 
-      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1', [id]);
-      if (rows.length === 0) return reply.status(404).send({ error: { message: 'Not found' } });
-      if (!can(user, 'unassign', rows[0])) return reply.status(403).send({ error: { message: 'Forbidden' } });
+      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
+      if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
+      if (!can(user, 'unassign', rows[0])) throw new AppError(403, { error: { message: 'Forbidden' } });
 
       const updateRes = await client.query(`
         UPDATE work_items 
@@ -357,9 +377,9 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const input = assignSchema.parse(req.body);
       const user = req.user as UserContext;
 
-      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1', [id]);
-      if (rows.length === 0) return reply.status(404).send({ error: { message: 'Not found' } });
-      if (!can(user, 'assign', rows[0])) return reply.status(403).send({ error: { message: 'Forbidden' } });
+      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
+      if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
+      if (!can(user, 'assign', rows[0])) throw new AppError(403, { error: { message: 'Forbidden' } });
 
       const updateRes = await client.query(`
         UPDATE work_items 
@@ -408,25 +428,26 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const user = req.user as UserContext;
 
       const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
-      if (rows.length === 0) return reply.status(404).send({ error: { message: 'Not found' } });
+      if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
       const item = rows[0];
 
-      if (!can(user, 'transition', item)) return reply.status(403).send({ error: { message: 'Forbidden' } });
-      if (item.version !== input.version) return reply.status(409).send({ error: { code: 'CONFLICT', message: 'Version mismatch' } });
+      if (!can(user, 'transition', item)) throw new AppError(403, { error: { message: 'Forbidden' } });
+      if (item.version !== input.version) throw new AppError(409, { error: { code: 'CONFLICT', message: 'Version mismatch', item } });
       
       if (!isValidTransition(item.status, input.status)) {
-        return reply.status(422).send({ error: { message: 'Illegal transition', from: item.status, to: input.status } });
+        throw new AppError(422, { error: { message: 'Illegal transition', from: item.status, to: input.status } });
       }
 
       // Reopen logic requires reason
       if ((item.status === 'resolved' || item.status === 'closed') && input.status === 'in_progress') {
-        if (!input.reason) return reply.status(422).send({ error: { message: 'Reason required for reopen' } });
+        if (!input.reason) throw new AppError(422, { error: { message: 'Reason required for reopen' } });
       }
 
-      // Approval logic
+      // Approval gate: items requiring approval cannot resolve/close without it.
+      // Exception: new → closed (discard junk item without needing approval).
       if ((input.status === 'resolved' || input.status === 'closed') && item.requires_approval) {
         if (item.approval_state !== 'approved' && !(item.status === 'new' && input.status === 'closed')) {
-          return reply.status(422).send({ error: { message: 'Item requires approval before resolution' } });
+          throw new AppError(422, { error: { message: 'Item requires approval before resolution' } });
         }
       }
 
@@ -460,11 +481,11 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const user = req.user as UserContext;
 
       const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
-      if (rows.length === 0) return reply.status(404).send({ error: { message: 'Not found' } });
+      if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
       const item = rows[0];
 
-      if (!can(user, 'approve_reject', item)) return reply.status(403).send({ error: { message: 'Forbidden' } });
-      if (item.version !== input.version) return reply.status(409).send({ error: { code: 'CONFLICT', message: 'Version mismatch' } });
+      if (!can(user, 'approve_reject', item)) throw new AppError(403, { error: { message: 'Forbidden' } });
+      if (item.version !== input.version) throw new AppError(409, { error: { code: 'CONFLICT', message: 'Version mismatch', item } });
 
       const updateRes = await client.query(`
         UPDATE work_items 
@@ -496,11 +517,11 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const user = req.user as UserContext;
 
       const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
-      if (rows.length === 0) return reply.status(404).send({ error: { message: 'Not found' } });
+      if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
       const item = rows[0];
 
-      if (!can(user, 'approve_reject', item)) return reply.status(403).send({ error: { message: 'Forbidden' } });
-      if (item.version !== input.version) return reply.status(409).send({ error: { code: 'CONFLICT', message: 'Version mismatch' } });
+      if (!can(user, 'approve_reject', item)) throw new AppError(403, { error: { message: 'Forbidden' } });
+      if (item.version !== input.version) throw new AppError(409, { error: { code: 'CONFLICT', message: 'Version mismatch', item } });
 
       const updateRes = await client.query(`
         UPDATE work_items 
@@ -532,9 +553,9 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const user = req.user as UserContext;
 
       const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1', [id]);
-      if (rows.length === 0) return reply.status(404).send({ error: { message: 'Not found' } });
+      if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
       const item = rows[0];
-      if (!can(user, 'comment', item)) return reply.status(403).send({ error: { message: 'Forbidden' } });
+      if (!can(user, 'comment', item)) throw new AppError(403, { error: { message: 'Forbidden' } });
 
       const commentRes = await client.query(`
         INSERT INTO comments (work_item_id, author_id, content)
@@ -554,7 +575,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
     });
   });
 
-  // List Comments
+  // List Comments — keyset pagination on (created_at, id) for stability
   fastify.get('/api/v1/work-items/:id/comments', { preValidation: [(fastify as any).authenticate] }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const { limit = 50, cursor } = req.query as any;
@@ -568,11 +589,12 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
     let query = 'SELECT * FROM comments WHERE work_item_id = $1';
     const values: any[] = [id, parseInt(limit)];
     if (cursor) {
-      // Keyset pagination using created_at
-      query += ` AND created_at > (SELECT created_at FROM comments WHERE id = $3)`;
+      // Keyset on (created_at, id) to avoid skips/dupes when two comments
+      // share the same created_at timestamp.
+      query += ` AND (created_at, id) > (SELECT created_at, id FROM comments WHERE id = $3)`;
       values.push(cursor);
     }
-    query += ' ORDER BY created_at ASC LIMIT $2';
+    query += ' ORDER BY created_at ASC, id ASC LIMIT $2';
 
     const { rows } = await pool.query(query, values);
     const nextCursor = rows.length === parseInt(limit) ? rows[rows.length - 1].id : null;

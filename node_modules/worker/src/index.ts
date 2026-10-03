@@ -6,7 +6,6 @@ const pool = new Pool({
 
 const MAX_ATTEMPTS = 5;
 const VISIBILITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-const BATCH_SIZE = 10;
 const POLL_INTERVAL_MS = 1000;
 
 async function processJob(client: any, job: any) {
@@ -27,8 +26,7 @@ async function processJob(client: any, job: any) {
   }
 
   // Figure out who to notify
-  // We notify assignees if it's assigned to someone else, or the creator, etc.
-  // We'll keep it simple: notify all leads/approvers in the team, and the assignee, except the actor.
+  // Notify all leads/approvers in the team, and the assignee, except the actor.
   const { rows: users } = await client.query(`
     SELECT DISTINCT u.id 
     FROM users u
@@ -42,102 +40,125 @@ async function processJob(client: any, job: any) {
   for (const user of users) {
     const title = `New event on work item: ${item.title}`;
     const body = `Event: ${event.type}`;
-    // Idempotent creation
-    await client.query(`
+    // Idempotent creation — ON CONFLICT DO NOTHING ensures running a job
+    // twice produces exactly one notification per user.
+    const result = await client.query(`
       INSERT INTO notifications (user_id, job_id, title, body)
       VALUES ($1, $2, $3, $4)
       ON CONFLICT (job_id, user_id) DO NOTHING
     `, [user.id, job.id, title, body]);
-    notifyCount++;
+    // Only count actual inserts, not conflict-skips
+    notifyCount += result.rowCount ?? 0;
   }
 
   console.log(`Job ${job.id}: generated ${notifyCount} notifications.`);
 }
 
 async function runWorkerIteration() {
+  // Reclaim crashed jobs in a separate, short transaction so the changes
+  // are visible to the polling query below (which runs in its own tx).
+  const reclaimClient = await pool.connect();
+  try {
+    // Increment attempts on reclaim so a perpetually-crashing job
+    // eventually reaches MAX_ATTEMPTS and goes dead.
+    await reclaimClient.query(`
+      UPDATE jobs 
+      SET status = CASE WHEN attempts + 1 >= $1 THEN 'dead'::job_status ELSE 'failed'::job_status END,
+          attempts = attempts + 1,
+          locked_until = NULL,
+          last_error = 'Reclaimed after worker crash (lease expired)'
+      WHERE status = 'running' AND locked_until < NOW()
+    `, [MAX_ATTEMPTS]);
+  } catch (err) {
+    console.error('Reclaim error:', err);
+  } finally {
+    reclaimClient.release();
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // Reclaim crashed jobs
-    await client.query(`
-      UPDATE jobs 
-      SET status = 'failed', locked_until = NULL
-      WHERE status = 'running' AND locked_until < NOW()
-    `);
-
-    // Poll for jobs
+    // Poll for jobs — one at a time to avoid lease expiry on later items
+    // in a large batch.
     const { rows: jobs } = await client.query(`
       SELECT * FROM jobs 
       WHERE status IN ('pending', 'failed') AND run_at <= NOW()
       ORDER BY created_at ASC
-      LIMIT $1 
+      LIMIT 1 
       FOR UPDATE SKIP LOCKED
-    `, [BATCH_SIZE]);
+    `);
 
     if (jobs.length === 0) {
       await client.query('ROLLBACK');
       return false; // No jobs processed
     }
 
-    // Mark as running
-    const jobIds = jobs.map(j => j.id);
+    const job = jobs[0];
+
+    // Mark as running with a lease
     await client.query(`
       UPDATE jobs 
       SET status = 'running', locked_until = NOW() + interval '5 minutes'
-      WHERE id = ANY($1)
-    `, [jobIds]);
+      WHERE id = $1
+    `, [job.id]);
     
     await client.query('COMMIT');
 
-    // Process each job independently
-    for (const job of jobs) {
-      const jobClient = await pool.connect();
-      try {
-        await jobClient.query('BEGIN');
-        await processJob(jobClient, job);
-        
-        await jobClient.query(`
-          UPDATE jobs 
-          SET status = 'completed', locked_until = NULL 
-          WHERE id = $1
-        `, [job.id]);
-        await jobClient.query('COMMIT');
-      } catch (err: any) {
+    // Process the job in its own transaction
+    const jobClient = await pool.connect();
+    try {
+      await jobClient.query('BEGIN');
+      await processJob(jobClient, job);
+      
+      // Verify the lease is still ours before marking complete.
+      // If it expired and was reclaimed, another worker may have re-processed it.
+      const result = await jobClient.query(`
+        UPDATE jobs 
+        SET status = 'completed', locked_until = NULL 
+        WHERE id = $1 AND status = 'running'
+        RETURNING id
+      `, [job.id]);
+
+      if (result.rowCount === 0) {
+        // Lease was reclaimed while we were processing — discard our work.
+        // Notifications are idempotent (ON CONFLICT DO NOTHING) so no harm done.
         await jobClient.query('ROLLBACK');
-        
-        // Handle failure
-        const failClient = await pool.connect();
-        try {
-          await failClient.query('BEGIN');
-          const attempts = job.attempts + 1;
-          const status = attempts >= MAX_ATTEMPTS ? 'dead' : 'failed';
-          
-          // Exponential backoff: 2^attempts * 10 seconds + jitter
-          const backoffSeconds = Math.pow(2, attempts) * 10 + Math.random() * 5;
-          
-          await failClient.query(`
-            UPDATE jobs 
-            SET status = $1, attempts = $2, run_at = NOW() + interval '1 second' * $3, 
-                last_error = $4, locked_until = NULL
-            WHERE id = $5
-          `, [status, attempts, backoffSeconds, err.message || String(err), job.id]);
-          await failClient.query('COMMIT');
-          console.error(`Job ${job.id} failed: ${err.message}. Status -> ${status}`);
-        } catch (failErr) {
-          await failClient.query('ROLLBACK');
-          console.error(`Failed to update job ${job.id} after failure`, failErr);
-        } finally {
-          failClient.release();
-        }
-      } finally {
-        jobClient.release();
+        console.warn(`Job ${job.id}: lease expired during processing, discarding.`);
+      } else {
+        await jobClient.query('COMMIT');
       }
+    } catch (err: any) {
+      await jobClient.query('ROLLBACK').catch(() => {});
+      
+      // Handle failure — increment attempts and apply backoff
+      const failClient = await pool.connect();
+      try {
+        const attempts = job.attempts + 1;
+        const status = attempts >= MAX_ATTEMPTS ? 'dead' : 'failed';
+        
+        // Exponential backoff: 2^attempts * 10 seconds + jitter
+        const backoffSeconds = Math.pow(2, attempts) * 10 + Math.random() * 5;
+        
+        await failClient.query(`
+          UPDATE jobs 
+          SET status = $1, attempts = $2, run_at = NOW() + interval '1 second' * $3, 
+              last_error = $4, locked_until = NULL
+          WHERE id = $5
+        `, [status, attempts, backoffSeconds, err.message || String(err), job.id]);
+        console.error(`Job ${job.id} failed: ${err.message}. Status -> ${status}`);
+      } catch (failErr) {
+        console.error(`Failed to update job ${job.id} after failure`, failErr);
+      } finally {
+        failClient.release();
+      }
+    } finally {
+      jobClient.release();
     }
 
-    return true; // Jobs were processed
+    return true; // A job was processed
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Worker iteration error:', err);
     return false;
   } finally {

@@ -79,6 +79,13 @@ fastify.post('/api/v1/auth/login', async (request, reply) => {
 fastify.decorate('authenticate', async (request: any, reply: any) => {
   try {
     await request.jwtVerify();
+    // Re-fetch memberships from DB on every request so role changes
+    // and team removals take effect immediately, not just after re-login.
+    const userId = request.user.id;
+    const { rows } = await pool.query('SELECT team_id, role FROM memberships WHERE user_id = $1', [userId]);
+    const memberships: Record<string, string> = {};
+    rows.forEach((r: any) => memberships[r.team_id] = r.role);
+    request.user.memberships = memberships;
   } catch (err) {
     reply.status(401).send({ error: { code: 'UNAUTHORIZED', message: 'Missing or invalid token' } });
   }

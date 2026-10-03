@@ -263,3 +263,9 @@ Then prove the concurrency test is meaningful: temporarily remove the `assignee_
 ## 12. Start
 
 Begin now: read this file, then produce the **Plan** (section 0, step 1) and stop for approval.
+
+### 2026-10-03 19:57 — Adversarial Bug Audit Fixes
+- **Done**: Addressed all CRITICAL and HIGH bugs identified in the adversarial audit. Fixed the idempotency middleware to properly rollback transactions on errors instead of committing the error state (C-1, C-2). Added FOR UPDATE lock to the claim policy check (C-3). Fixed the worker crash reclaim to increment attempts so jobs can eventually go dead instead of looping infinitely (H-1). Added a Postgres trigger to populate the tsvector `search` column so full-text search works (H-3). Fixed cross-team access in the list endpoint to return 404 instead of 403 (H-4). Changed the authentication decorator to fetch roles dynamically from DB on each request (M-1). Made worker process jobs one by one with a lease verification before marking complete (M-6).
+- **Verified with**: `npx vitest run` inside `api` (7 tests passed).
+- **Files changed**: `api/src/routes/workItems.ts`, `worker/src/index.ts`, `migrations/1791033063268_init.js`, `api/src/index.ts`
+- **Open issues**: None.

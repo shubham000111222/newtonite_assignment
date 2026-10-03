@@ -56,6 +56,19 @@ exports.up = (pgm) => {
     CREATE INDEX idx_work_items_team_due_at ON work_items (team_id, due_at);
     CREATE INDEX idx_work_items_search ON work_items USING GIN(search);
 
+    -- Trigger to keep the search tsvector column populated.
+    -- Without this, the GIN index is useless and full-text queries return zero rows.
+    CREATE OR REPLACE FUNCTION work_items_search_update() RETURNS trigger AS $$
+    BEGIN
+      NEW.search := to_tsvector('english', coalesce(NEW.title, '') || ' ' || coalesce(NEW.description, ''));
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE TRIGGER trg_work_items_search
+      BEFORE INSERT OR UPDATE OF title, description ON work_items
+      FOR EACH ROW EXECUTE FUNCTION work_items_search_update();
+
     CREATE TABLE events (
       id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
       work_item_id UUID NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
