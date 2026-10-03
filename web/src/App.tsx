@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
-import { LayoutDashboard, List, Bell, LogOut, CheckCircle, AlertCircle, Plus } from 'lucide-react';
+import { LayoutDashboard, List, LogOut, AlertCircle, Plus, Loader2 } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 const api = async (url: string, options: RequestInit = {}) => {
   const token = localStorage.getItem('token');
@@ -18,9 +19,25 @@ const api = async (url: string, options: RequestInit = {}) => {
   return res.json();
 };
 
+function useIdempotentMutation<TData, TVariables>(
+  mutationFn: (vars: TVariables & { idempotencyKey: string }) => Promise<TData>,
+  options?: any
+) {
+  const idempotencyKey = useRef(crypto.randomUUID());
+
+  return useMutation({
+    mutationFn: (vars: TVariables) => mutationFn({ ...vars, idempotencyKey: idempotencyKey.current }),
+    ...options,
+    onSuccess: (...args) => {
+      idempotencyKey.current = crypto.randomUUID();
+      if (options?.onSuccess) options.onSuccess(...args);
+    }
+  });
+}
+
 function Toast({ message, onClose }: { message: string, onClose: () => void }) {
   useEffect(() => {
-    const timer = setTimeout(onClose, 4000);
+    const timer = setTimeout(onClose, 5000);
     return () => clearTimeout(timer);
   }, [onClose]);
 
@@ -32,55 +49,75 @@ function Toast({ message, onClose }: { message: string, onClose: () => void }) {
   );
 }
 
+function LoadingSpinner() {
+  return (
+    <div className="flex items-center justify-center p-8 text-muted gap-2">
+      <Loader2 className="animate-spin" size={24} /> Loading...
+    </div>
+  );
+}
+
+function ErrorMessage({ error, retry }: { error: Error, retry?: () => void }) {
+  return (
+    <div className="p-8 text-danger flex-col items-center gap-4 text-center">
+      <AlertCircle size={32} />
+      <div>{error.message}</div>
+      {retry && <button onClick={retry}>Retry</button>}
+    </div>
+  );
+}
+
 function Login({ setToken }: { setToken: (t: string) => void }) {
   const [email, setEmail] = useState('user0@example.com');
   const [password, setPassword] = useState('password123');
-  const [error, setError] = useState('');
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const { token } = await api('/api/v1/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ email, password })
-      });
-      localStorage.setItem('token', token);
-      setToken(token);
-    } catch (err: any) {
-      setError(err.message);
+  const loginMutation = useMutation({
+    mutationFn: () => api('/api/v1/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password })
+    }),
+    onSuccess: (data) => {
+      localStorage.setItem('token', data.token);
+      setToken(data.token);
     }
-  };
+  });
 
   return (
     <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center' }}>
-      <form onSubmit={handleLogin} className="card flex-col gap-6" style={{ width: 420 }}>
+      <form onSubmit={(e) => { e.preventDefault(); loginMutation.mutate(); }} className="card flex-col gap-6" style={{ width: 420 }}>
         <div>
           <h2 className="text-2xl" style={{ color: 'var(--primary-hover)' }}>Newtonite</h2>
           <p className="text-muted mt-2">Sign in to your workspace</p>
         </div>
-        {error && <div style={{ color: 'var(--danger)', padding: '12px', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '6px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>{error}</div>}
+        {loginMutation.error && (
+          <div style={{ color: 'var(--danger)', padding: '12px', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '6px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+            {loginMutation.error.message}
+          </div>
+        )}
         <div className="flex-col gap-2">
           <label className="text-sm text-muted">Email</label>
-          <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
+          <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} disabled={loginMutation.isPending} />
         </div>
         <div className="flex-col gap-2">
           <label className="text-sm text-muted">Password</label>
-          <input placeholder="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} />
+          <input placeholder="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} disabled={loginMutation.isPending} />
         </div>
-        <button type="submit" style={{ marginTop: '8px', padding: '12px' }}>Sign In</button>
+        <button type="submit" disabled={loginMutation.isPending} style={{ marginTop: '8px', padding: '12px' }}>
+          {loginMutation.isPending ? 'Signing in...' : 'Sign In'}
+        </button>
       </form>
     </div>
   );
 }
 
 function Dashboard({ teamId }: { teamId: string }) {
-  const [stats, setStats] = useState<any>(null);
+  const { data: stats, isLoading, error, refetch } = useQuery({
+    queryKey: ['dashboard', teamId],
+    queryFn: () => api(`/api/v1/dashboard?team_id=${teamId}`)
+  });
 
-  useEffect(() => {
-    api(`/api/v1/dashboard?team_id=${teamId}`).then(setStats).catch(console.error);
-  }, [teamId]);
-
-  if (!stats) return <div className="text-muted">Loading dashboard...</div>;
+  if (isLoading) return <LoadingSpinner />;
+  if (error) return <ErrorMessage error={error} retry={refetch} />;
 
   return (
     <div>
@@ -107,44 +144,47 @@ function Dashboard({ teamId }: { teamId: string }) {
 }
 
 function WorkItemsList({ teamId }: { teamId: string }) {
-  const [items, setItems] = useState<any[]>([]);
+  const queryClient = useQueryClient();
   const [isCreating, setIsCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [toastMsg, setToastMsg] = useState('');
 
-  const fetchItems = () => {
-    api(`/api/v1/work-items?team_id=${teamId}`).then(data => setItems(data.items)).catch(console.error);
-  };
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['work-items', teamId],
+    queryFn: () => api(`/api/v1/work-items?team_id=${teamId}`)
+  });
 
-  useEffect(() => {
-    fetchItems();
-  }, [teamId]);
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await api('/api/v1/work-items', {
-        method: 'POST',
-        headers: { 'Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify({
-          team_id: teamId,
-          title: newTitle,
-          description: newDesc,
-          type: 'task',
-          priority: 'medium'
-        })
-      });
+  const createMutation = useIdempotentMutation({
+    mutationFn: (vars: any) => api('/api/v1/work-items', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': vars.idempotencyKey },
+      body: JSON.stringify({
+        team_id: teamId,
+        title: newTitle,
+        description: newDesc,
+        type: 'task',
+        priority: 'medium'
+      })
+    }),
+    onSuccess: () => {
       setIsCreating(false);
       setNewTitle('');
       setNewDesc('');
-      fetchItems();
-    } catch (err: any) {
-      alert(err.message);
-    }
-  };
+      queryClient.invalidateQueries({ queryKey: ['work-items', teamId] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard', teamId] });
+    },
+    onError: (err: any) => setToastMsg(err.message)
+  });
+
+  if (isLoading) return <LoadingSpinner />;
+  if (error) return <ErrorMessage error={error} retry={refetch} />;
+
+  const items = data.items || [];
 
   return (
     <div>
+      {toastMsg && <Toast message={toastMsg} onClose={() => setToastMsg('')} />}
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-2xl">Work Items</h1>
         <button className="flex items-center gap-2" onClick={() => setIsCreating(true)}>
@@ -154,19 +194,21 @@ function WorkItemsList({ teamId }: { teamId: string }) {
 
       {isCreating && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <form className="card flex-col gap-4" style={{ width: 500 }} onSubmit={handleCreate}>
+          <form className="card flex-col gap-4" style={{ width: 500 }} onSubmit={(e) => { e.preventDefault(); createMutation.mutate({}); }}>
             <h2 className="text-xl">Create New Item</h2>
             <div className="flex-col gap-2">
               <label className="text-sm text-muted">Title</label>
-              <input required value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="E.g., Update database credentials" />
+              <input required value={newTitle} onChange={e => setNewTitle(e.target.value)} disabled={createMutation.isPending} placeholder="E.g., Update database credentials" />
             </div>
             <div className="flex-col gap-2">
               <label className="text-sm text-muted">Description</label>
-              <textarea required value={newDesc} onChange={e => setNewDesc(e.target.value)} rows={4} placeholder="Detailed description..." />
+              <textarea required value={newDesc} onChange={e => setNewDesc(e.target.value)} disabled={createMutation.isPending} rows={4} placeholder="Detailed description..." />
             </div>
             <div className="flex gap-4 mt-4" style={{ justifyContent: 'flex-end' }}>
-              <button type="button" onClick={() => setIsCreating(false)} style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>Cancel</button>
-              <button type="submit">Create Item</button>
+              <button type="button" disabled={createMutation.isPending} onClick={() => setIsCreating(false)} style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>Cancel</button>
+              <button type="submit" disabled={createMutation.isPending}>
+                {createMutation.isPending ? 'Creating...' : 'Create Item'}
+              </button>
             </div>
           </form>
         </div>
@@ -183,7 +225,7 @@ function WorkItemsList({ teamId }: { teamId: string }) {
             </tr>
           </thead>
           <tbody>
-            {items.map(item => (
+            {items.map((item: any) => (
               <tr key={item.id}>
                 <td style={{ fontWeight: 500 }}><Link to={`/items/${item.id}`}>{item.title}</Link></td>
                 <td><span className={`badge ${item.status}`}>{item.status.replace('_', ' ')}</span></td>
@@ -208,37 +250,44 @@ function WorkItemsList({ teamId }: { teamId: string }) {
 }
 
 function WorkItemDetail() {
-  const [item, setItem] = useState<any>(null);
+  const queryClient = useQueryClient();
+  const id = useLocation().pathname.split('/').pop()!;
   const [toastMsg, setToastMsg] = useState('');
-  const id = useLocation().pathname.split('/').pop();
 
-  useEffect(() => {
-    api(`/api/v1/work-items/${id}`).then(setItem).catch(console.error);
-  }, [id]);
+  const { data: item, isLoading, error, refetch } = useQuery({
+    queryKey: ['work-item', id],
+    queryFn: () => api(`/api/v1/work-items/${id}`)
+  });
 
-  const action = async (url: string, body?: any) => {
-    try {
-      const headers: any = {};
-      if (body) {
-        headers['Idempotency-Key'] = crypto.randomUUID();
-      }
-      const newItem = await api(url, {
+  const actionMutation = useIdempotentMutation({
+    mutationFn: (vars: { url: string, body?: any, idempotencyKey: string }) => {
+      const headers: any = { 'Idempotency-Key': vars.idempotencyKey };
+      return api(vars.url, {
         method: 'POST',
         headers,
-        body: body ? JSON.stringify(body) : undefined
+        body: vars.body ? JSON.stringify(vars.body) : undefined
       });
-      setItem(newItem);
-    } catch (err: any) {
+    },
+    onSuccess: (newItem) => {
+      queryClient.setQueryData(['work-item', id], newItem);
+      queryClient.invalidateQueries({ queryKey: ['work-items'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+    onError: (err: any) => {
       if (err.cause?.status === 409) {
-        setToastMsg('Conflict detected! Another user modified this item. Refreshing to latest state...');
-        api(`/api/v1/work-items/${id}`).then(setItem);
+        setToastMsg('Conflict detected! Changed by another user, please review.');
+        queryClient.invalidateQueries({ queryKey: ['work-item', id] });
       } else {
         setToastMsg(err.message);
       }
     }
-  };
+  });
 
-  if (!item) return <div className="text-muted">Loading item...</div>;
+  if (isLoading) return <LoadingSpinner />;
+  if (error) return <ErrorMessage error={error} retry={refetch} />;
+  if (!item) return <div className="text-muted p-8 text-center">Item not found.</div>;
+
+  const isPending = actionMutation.isPending;
 
   return (
     <div className="flex-col gap-6">
@@ -257,11 +306,21 @@ function WorkItemDetail() {
         
         <h3 className="text-sm text-muted uppercase tracking-wider mb-4">Available Actions</h3>
         <div className="flex gap-4 flex-wrap">
-          {item.allowedActions.includes('claim') && <button onClick={() => action(`/api/v1/work-items/${id}/claim`, {})}>Claim Item</button>}
-          {item.allowedActions.includes('unassign') && <button onClick={() => action(`/api/v1/work-items/${id}/release`, {})}>Release Assignment</button>}
-          {item.allowedActions.includes('transition') && <button onClick={() => action(`/api/v1/work-items/${id}/transition`, { version: item.version, status: 'in_progress' })}>Start Work</button>}
-          {item.allowedActions.includes('transition') && <button onClick={() => action(`/api/v1/work-items/${id}/transition`, { version: item.version, status: 'resolved' })}>Mark Resolved</button>}
-          {item.allowedActions.includes('approve_reject') && <button onClick={() => action(`/api/v1/work-items/${id}/approve`, { version: item.version })}>Approve Request</button>}
+          {item.allowedActions.includes('claim') && (
+            <button disabled={isPending} onClick={() => actionMutation.mutate({ url: `/api/v1/work-items/${id}/claim` })}>Claim Item</button>
+          )}
+          {item.allowedActions.includes('unassign') && (
+            <button disabled={isPending} onClick={() => actionMutation.mutate({ url: `/api/v1/work-items/${id}/release` })}>Release Assignment</button>
+          )}
+          {item.allowedActions.includes('transition') && (
+            <button disabled={isPending} onClick={() => actionMutation.mutate({ url: `/api/v1/work-items/${id}/transition`, body: { version: item.version, status: 'in_progress' } })}>Start Work</button>
+          )}
+          {item.allowedActions.includes('transition') && (
+            <button disabled={isPending} onClick={() => actionMutation.mutate({ url: `/api/v1/work-items/${id}/transition`, body: { version: item.version, status: 'resolved' } })}>Mark Resolved</button>
+          )}
+          {item.allowedActions.includes('approve_reject') && (
+            <button disabled={isPending} onClick={() => actionMutation.mutate({ url: `/api/v1/work-items/${id}/approve`, body: { version: item.version } })}>Approve Request</button>
+          )}
           
           {item.allowedActions.length === 0 && <span className="text-muted text-sm">No actions available for your role/state.</span>}
         </div>
@@ -272,32 +331,36 @@ function WorkItemDetail() {
 
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || '');
-  const [user, setUser] = useState<any>(null);
-  const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
+
+  const { data: user, isLoading } = useQuery({
+    queryKey: ['auth', token],
+    queryFn: () => api('/api/v1/auth/me'),
+    enabled: !!token,
+    retry: false
+  });
 
   useEffect(() => {
-    if (token) {
-      api('/api/v1/auth/me')
-        .then(data => setUser(data.user))
-        .catch(() => {
-          localStorage.removeItem('token');
-          setToken('');
-        });
-    }
-  }, [token]);
+    if (!token) queryClient.clear();
+  }, [token, queryClient]);
 
   if (!token) return <Login setToken={setToken} />;
-  if (!user) return null;
+  if (isLoading) return <div className="layout"><div className="content"><LoadingSpinner /></div></div>;
+  if (!user) {
+    localStorage.removeItem('token');
+    setToken('');
+    return null;
+  }
 
-  const teamId = Object.keys(user.memberships)[0];
+  const teamId = Object.keys(user.user.memberships)[0];
 
   return (
     <div className="layout">
       <div className="sidebar">
         <div className="mb-6">
           <h2 className="text-xl" style={{ color: 'var(--primary-hover)', fontWeight: 700, letterSpacing: '-0.05em' }}>Newtonite</h2>
-          <div className="text-sm text-muted mt-1">{user.name}</div>
+          <div className="text-sm text-muted mt-1">{user.user.name}</div>
         </div>
         <Link to="/" className={location.pathname === '/' ? 'active' : ''}><LayoutDashboard size={18} /> Dashboard</Link>
         <Link to="/items" className={location.pathname.startsWith('/items') ? 'active' : ''}><List size={18} /> Work Items</Link>
