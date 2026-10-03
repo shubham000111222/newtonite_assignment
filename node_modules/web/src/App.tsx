@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
-import { LayoutDashboard, List, LogOut, AlertCircle, Plus, Loader2 } from 'lucide-react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import React, { useEffect, useState, useRef, Fragment } from 'react';
+import { Routes, Route, useNavigate, useLocation, Link, useSearchParams } from 'react-router-dom';
+import { LayoutDashboard, List, LogOut, AlertCircle, Plus, Loader2, Search, Filter } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 
 const api = async (url: string, options: RequestInit = {}) => {
   const token = localStorage.getItem('token');
@@ -110,7 +110,7 @@ function Login({ setToken }: { setToken: (t: string) => void }) {
   );
 }
 
-function Dashboard({ teamId }: { teamId: string }) {
+function Dashboard({ teamId, userId }: { teamId: string, userId: string }) {
   const { data: stats, isLoading, error, refetch } = useQuery({
     queryKey: ['dashboard', teamId],
     queryFn: () => api(`/api/v1/dashboard?team_id=${teamId}`)
@@ -123,36 +123,59 @@ function Dashboard({ teamId }: { teamId: string }) {
     <div>
       <h1 className="text-2xl mb-8">Dashboard Overview</h1>
       <div className="flex gap-6">
-        <div className="card card-hoverable" style={{ flex: 1 }}>
+        <Link to={`/items?assignee_id=${userId}`} className="card card-hoverable" style={{ flex: 1, textDecoration: 'none', color: 'inherit' }}>
           <div className="text-muted mb-2 text-sm uppercase tracking-wider">Assigned to me</div>
           <div className="text-2xl" style={{ fontSize: '3rem' }}>{stats.assignedToMe}</div>
-        </div>
-        <div className="card card-hoverable" style={{ flex: 1 }}>
+        </Link>
+        <Link to={`/items?status=new`} className="card card-hoverable" style={{ flex: 1, textDecoration: 'none', color: 'inherit' }}>
           <div className="text-muted mb-2 text-sm uppercase tracking-wider">Awaiting Approval</div>
           <div className="text-2xl" style={{ fontSize: '3rem', color: 'var(--primary-hover)' }}>{stats.awaitingApproval}</div>
-        </div>
-        <div className="card card-hoverable" style={{ flex: 1, border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+        </Link>
+        <Link to={`/items?priority=urgent`} className="card card-hoverable" style={{ flex: 1, border: '1px solid rgba(239, 68, 68, 0.3)', textDecoration: 'none', color: 'inherit' }}>
           <div className="text-muted mb-2 text-sm uppercase tracking-wider">Unassigned Urgent</div>
           <div className="text-2xl flex items-center gap-2" style={{ fontSize: '3rem', color: 'var(--danger-hover)' }}>
             <AlertCircle size={32} />
             {stats.unassignedUrgent}
           </div>
-        </div>
+        </Link>
       </div>
     </div>
   );
 }
 
-function WorkItemsList({ teamId }: { teamId: string }) {
+function WorkItemsList({ teamId, userId }: { teamId: string, userId: string }) {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  
+  const statusFilter = searchParams.get('status') || '';
+  const priorityFilter = searchParams.get('priority') || '';
+  const overdueFilter = searchParams.get('overdue') || '';
+  const qFilter = searchParams.get('q') || '';
+  const assigneeFilter = searchParams.get('assignee_id') || '';
+
   const [isCreating, setIsCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [toastMsg, setToastMsg] = useState('');
 
-  const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['work-items', teamId],
-    queryFn: () => api(`/api/v1/work-items?team_id=${teamId}`)
+  const { 
+    data, isLoading, error, refetch, 
+    fetchNextPage, hasNextPage, isFetchingNextPage 
+  } = useInfiniteQuery({
+    queryKey: ['work-items', teamId, statusFilter, priorityFilter, overdueFilter, qFilter, assigneeFilter],
+    queryFn: ({ pageParam }) => {
+      const p = new URLSearchParams();
+      p.set('team_id', teamId);
+      if (statusFilter) p.set('status', statusFilter);
+      if (priorityFilter) p.set('priority', priorityFilter);
+      if (overdueFilter) p.set('overdue', overdueFilter);
+      if (qFilter) p.set('q', qFilter);
+      if (assigneeFilter) p.set('assignee_id', assigneeFilter);
+      if (pageParam) p.set('cursor', pageParam);
+      return api(`/api/v1/work-items?${p.toString()}`);
+    },
+    initialPageParam: '',
+    getNextPageParam: (lastPage) => lastPage.nextCursor || undefined
   });
 
   const createMutation = useIdempotentMutation({
@@ -180,7 +203,12 @@ function WorkItemsList({ teamId }: { teamId: string }) {
   if (isLoading) return <LoadingSpinner />;
   if (error) return <ErrorMessage error={error} retry={refetch} />;
 
-  const items = data.items || [];
+  const setParam = (key: string, value: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setSearchParams(next);
+  };
 
   return (
     <div>
@@ -190,6 +218,45 @@ function WorkItemsList({ teamId }: { teamId: string }) {
         <button className="flex items-center gap-2" onClick={() => setIsCreating(true)}>
           <Plus size={16} /> New Item
         </button>
+      </div>
+
+      <div className="card mb-6 flex items-center gap-4 flex-wrap" style={{ padding: '16px 24px' }}>
+        <div className="flex items-center gap-2" style={{ flex: 1, minWidth: 200, background: 'rgba(0,0,0,0.2)', padding: '0 12px', borderRadius: 8, border: '1px solid var(--panel-border)' }}>
+          <Search size={16} className="text-muted" />
+          <input 
+            placeholder="Search titles and descriptions..." 
+            value={qFilter} 
+            onChange={e => setParam('q', e.target.value)} 
+            style={{ border: 'none', background: 'transparent', boxShadow: 'none', flex: 1, padding: '12px 0' }}
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <Filter size={16} className="text-muted" />
+          <select value={assigneeFilter} onChange={e => setParam('assignee_id', e.target.value)}>
+            <option value="">Any Assignee</option>
+            <option value={userId}>Assigned to Me</option>
+          </select>
+          <select value={statusFilter} onChange={e => setParam('status', e.target.value)}>
+            <option value="">All Statuses</option>
+            <option value="new">New</option>
+            <option value="triaged">Triaged</option>
+            <option value="in_progress">In Progress</option>
+            <option value="blocked">Blocked</option>
+            <option value="resolved">Resolved</option>
+            <option value="closed">Closed</option>
+          </select>
+          <select value={priorityFilter} onChange={e => setParam('priority', e.target.value)}>
+            <option value="">All Priorities</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+          <select value={overdueFilter} onChange={e => setParam('overdue', e.target.value)}>
+            <option value="">Any Timing</option>
+            <option value="true">Overdue</option>
+          </select>
+        </div>
       </div>
 
       {isCreating && (
@@ -225,26 +292,41 @@ function WorkItemsList({ teamId }: { teamId: string }) {
             </tr>
           </thead>
           <tbody>
-            {items.map((item: any) => (
-              <tr key={item.id}>
-                <td style={{ fontWeight: 500 }}><Link to={`/items/${item.id}`}>{item.title}</Link></td>
-                <td><span className={`badge ${item.status}`}>{item.status.replace('_', ' ')}</span></td>
-                <td><span className={`badge ${item.priority === 'urgent' ? 'urgent' : ''}`}>{item.priority}</span></td>
-                <td style={{ textAlign: 'right' }}>
-                  <Link to={`/items/${item.id}`} style={{ fontSize: '0.875rem' }}>View →</Link>
-                </td>
-              </tr>
+            {data.pages.map((page, i) => (
+              <React.Fragment key={i}>
+                {page.items.map((item: any) => (
+                  <tr key={item.id}>
+                    <td style={{ fontWeight: 500 }}><Link to={`/items/${item.id}`}>{item.title}</Link></td>
+                    <td><span className={`badge ${item.status}`}>{item.status.replace('_', ' ')}</span></td>
+                    <td><span className={`badge ${item.priority === 'urgent' ? 'urgent' : ''}`}>{item.priority}</span></td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Link to={`/items/${item.id}`} style={{ fontSize: '0.875rem' }}>View →</Link>
+                    </td>
+                  </tr>
+                ))}
+              </React.Fragment>
             ))}
-            {items.length === 0 && (
+            {data.pages[0].items.length === 0 && (
               <tr>
                 <td colSpan={4} style={{ textAlign: 'center', padding: '48px', color: 'var(--text-muted)' }}>
-                  No work items found.
+                  No work items found matching filters.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+      {hasNextPage && (
+        <div className="flex justify-center mt-6">
+          <button 
+            disabled={isFetchingNextPage} 
+            onClick={() => fetchNextPage()} 
+            style={{ background: 'transparent', border: '1px solid var(--panel-border)', color: 'var(--text-muted)' }}
+          >
+            {isFetchingNextPage ? 'Loading more...' : 'Load More'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -371,8 +453,8 @@ export default function App() {
       </div>
       <div className="content">
         <Routes>
-          <Route path="/" element={<Dashboard teamId={teamId} />} />
-          <Route path="/items" element={<WorkItemsList teamId={teamId} />} />
+          <Route path="/" element={<Dashboard teamId={teamId} userId={user.user.id} />} />
+          <Route path="/items" element={<WorkItemsList teamId={teamId} userId={user.user.id} />} />
           <Route path="/items/:id" element={<WorkItemDetail />} />
         </Routes>
       </div>
