@@ -58,3 +58,10 @@ graph TD
 - Centralized Policy engine for Authorization
 - Idempotent API mutations (using `Idempotency-Key`)
 - Basic Frontend with Dashboard and Work Item management.
+
+## Assumptions
+- We assume that PostgreSQL 16+ is used as the single source of truth for both data and queueing (via `FOR UPDATE SKIP LOCKED`) because we intentionally avoided Kafka or Redis to minimize infrastructural complexity.
+- We assume teams operate semi-independently and users might belong to multiple teams with different roles, but work items strictly belong to a single team.
+- The UI assumes optimistic state management is acceptable (it does not require a real-time websocket connection yet) and gracefully recovers from `409 Conflict` errors by refreshing the data.
+- The API assumes users must provide their own UUID `Idempotency-Key` headers for mutations.
+- The worker assumes a crash can happen at any time, using a 5-minute visibility timeout to reclaim leased jobs.
