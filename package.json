@@ -5,6 +5,10 @@
   "main": "index.js",
   "scripts": {
     "migrate": "node-pg-migrate",
+    "seed": "tsx scripts/seed.ts",
+    "dev:api": "cd api && npm run dev",
+    "dev:worker": "cd worker && npm run dev",
+    "dev:web": "cd web && npm run dev",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
