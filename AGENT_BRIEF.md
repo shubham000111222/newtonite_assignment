@@ -53,14 +53,14 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done and verified
 - [x] Phase 2 committed
 
 ### Phase 3 — Outbox, worker, notifications
-- [ ] Job row written in same transaction as item change + event
-- [ ] Worker polling with `FOR UPDATE SKIP LOCKED`
-- [ ] Exponential backoff + jitter, max attempts, dead status
-- [ ] Lease/visibility timeout for crashed worker
-- [ ] Idempotent notification creation (unique constraints)
-- [ ] Notifications API
-- [ ] Admin endpoint/CLI to inspect failed/dead jobs
-- [ ] Phase 3 committed
+- [x] Job row written in same transaction as item change + event
+- [x] Worker polling with `FOR UPDATE SKIP LOCKED`
+- [x] Exponential backoff + jitter, max attempts, dead status
+- [x] Lease/visibility timeout for crashed worker
+- [x] Idempotent notification creation (unique constraints)
+- [x] Notifications API
+- [x] Admin endpoint/CLI to inspect failed/dead jobs
+- [x] Phase 3 committed
 
 ### Phase 4 — Frontend
 - [ ] Login, routing, API client with Idempotency-Key handling

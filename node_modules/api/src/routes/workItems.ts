@@ -103,10 +103,13 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const item = rows[0];
 
       // Add event
-      await client.query(`
+      const eventRes = await client.query(`
         INSERT INTO events (work_item_id, team_id, actor_id, type, payload)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id
       `, [item.id, item.team_id, user.id, 'created', { item }]);
+      await client.query(`
+        INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
+      `, [eventRes.rows[0].id, {}]);
 
       // We should also add a job here, but that is Phase 3! We can add a placeholder or skip for now.
 
@@ -250,10 +253,13 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
         const updateRes = await client.query(updateQuery, values);
         const updatedItem = updateRes.rows[0];
 
-        await client.query(`
-          INSERT INTO events (work_item_id, team_id, actor_id, type, payload)
-          VALUES ($1, $2, $3, $4, $5)
-        `, [id, updatedItem.team_id, user.id, 'updated', input]);
+        const eventRes = await client.query(`
+        INSERT INTO events (work_item_id, team_id, actor_id, type, payload)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id
+      `, [id, updatedItem.team_id, user.id, 'updated', input]);
+      await client.query(`
+        INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
+      `, [eventRes.rows[0].id, {}]);
 
         await client.query('COMMIT');
         updatedItem.allowedActions = getAllowedActions(user, updatedItem);
@@ -299,10 +305,13 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       }
 
       const updatedItem = updateRes.rows[0];
-      await client.query(`
+      const eventRes = await client.query(`
         INSERT INTO events (work_item_id, team_id, actor_id, type, payload)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id
       `, [id, updatedItem.team_id, user.id, 'claimed', { assignee_id: user.id }]);
+      await client.query(`
+        INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
+      `, [eventRes.rows[0].id, {}]);
 
       updatedItem.allowedActions = getAllowedActions(user, updatedItem);
       return updatedItem;
@@ -327,10 +336,13 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       `, [id]);
 
       const updatedItem = updateRes.rows[0];
-      await client.query(`
+      const eventRes = await client.query(`
         INSERT INTO events (work_item_id, team_id, actor_id, type, payload)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id
       `, [id, updatedItem.team_id, user.id, 'released', {}]);
+      await client.query(`
+        INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
+      `, [eventRes.rows[0].id, {}]);
 
       updatedItem.allowedActions = getAllowedActions(user, updatedItem);
       return updatedItem;
@@ -357,10 +369,13 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       `, [input.assignee_id, id]);
 
       const updatedItem = updateRes.rows[0];
-      await client.query(`
+      const eventRes = await client.query(`
         INSERT INTO events (work_item_id, team_id, actor_id, type, payload)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id
       `, [id, updatedItem.team_id, user.id, 'assigned', { assignee_id: input.assignee_id }]);
+      await client.query(`
+        INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
+      `, [eventRes.rows[0].id, {}]);
 
       updatedItem.allowedActions = getAllowedActions(user, updatedItem);
       return updatedItem;
@@ -423,10 +438,13 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       `, [input.status, id]);
 
       const updatedItem = updateRes.rows[0];
-      await client.query(`
+      const eventRes = await client.query(`
         INSERT INTO events (work_item_id, team_id, actor_id, type, payload)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id
       `, [id, updatedItem.team_id, user.id, 'status_changed', { from: item.status, to: input.status, reason: input.reason }]);
+      await client.query(`
+        INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
+      `, [eventRes.rows[0].id, {}]);
 
       updatedItem.allowedActions = getAllowedActions(user, updatedItem);
       return updatedItem;
@@ -456,10 +474,13 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       `, [id]);
 
       const updatedItem = updateRes.rows[0];
-      await client.query(`
+      const eventRes = await client.query(`
         INSERT INTO events (work_item_id, team_id, actor_id, type, payload)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id
       `, [id, updatedItem.team_id, user.id, 'approved', { comment: input.comment }]);
+      await client.query(`
+        INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
+      `, [eventRes.rows[0].id, {}]);
 
       updatedItem.allowedActions = getAllowedActions(user, updatedItem);
       return updatedItem;
@@ -489,10 +510,13 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       `, [id]);
 
       const updatedItem = updateRes.rows[0];
-      await client.query(`
+      const eventRes = await client.query(`
         INSERT INTO events (work_item_id, team_id, actor_id, type, payload)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id
       `, [id, updatedItem.team_id, user.id, 'rejected', { reason: input.reason }]);
+      await client.query(`
+        INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
+      `, [eventRes.rows[0].id, {}]);
 
       updatedItem.allowedActions = getAllowedActions(user, updatedItem);
       return updatedItem;
@@ -518,10 +542,13 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
         RETURNING *
       `, [id, user.id, input.content]);
 
-      await client.query(`
+      const eventRes = await client.query(`
         INSERT INTO events (work_item_id, team_id, actor_id, type, payload)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id
       `, [id, item.team_id, user.id, 'commented', { comment_id: commentRes.rows[0].id }]);
+      await client.query(`
+        INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
+      `, [eventRes.rows[0].id, {}]);
 
       return commentRes.rows[0];
     });

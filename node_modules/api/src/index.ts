@@ -8,6 +8,8 @@ import { z } from 'zod';
 import * as crypto from 'crypto';
 import workItemsRoutes from './routes/workItems';
 import dashboardRoutes from './routes/dashboard';
+import notificationsRoutes from './routes/notifications';
+import adminRoutes from './routes/admin';
 
 const fastify = Fastify({ 
   logger: true,
@@ -88,6 +90,8 @@ fastify.get('/api/v1/auth/me', { preValidation: [(fastify as any).authenticate] 
 
 fastify.register(workItemsRoutes);
 fastify.register(dashboardRoutes);
+fastify.register(notificationsRoutes);
+fastify.register(adminRoutes);
 
 const start = async () => {
   try {
