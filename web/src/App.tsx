@@ -397,10 +397,22 @@ function WorkItemDetail() {
   const id = useLocation().pathname.split('/').pop()!;
   const [toastMsg, setToastMsg] = useState('');
 
+  // Main data, fetched once (unless manually invalidated)
   const { data: item, isLoading, error, refetch } = useQuery({
     queryKey: ['work-item', id],
-    queryFn: () => api(`/api/v1/work-items/${id}`)
+    queryFn: () => api(`/api/v1/work-items/${id}`),
+    staleTime: Infinity
   });
+
+  // Background poller
+  const { data: pollData } = useQuery({
+    queryKey: ['work-item-poll', id],
+    queryFn: () => api(`/api/v1/work-items/${id}`),
+    refetchInterval: 20000,
+    refetchOnWindowFocus: true
+  });
+
+  const hasNewVersion = item && pollData && pollData.version > item.version;
 
   const actionMutation = useIdempotentMutation({
     mutationFn: (vars: { url: string, body?: any, idempotencyKey: string }) => {
@@ -413,13 +425,16 @@ function WorkItemDetail() {
     },
     onSuccess: (newItem) => {
       queryClient.setQueryData(['work-item', id], newItem);
+      queryClient.setQueryData(['work-item-poll', id], newItem);
       queryClient.invalidateQueries({ queryKey: ['work-items'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['work-item-events', id] });
     },
     onError: (err: any) => {
       if (err.cause?.status === 409) {
         setToastMsg('Conflict detected! Changed by another user, please review.');
         queryClient.invalidateQueries({ queryKey: ['work-item', id] });
+        queryClient.invalidateQueries({ queryKey: ['work-item-poll', id] });
       } else {
         setToastMsg(err.message);
       }
@@ -434,13 +449,26 @@ function WorkItemDetail() {
 
   return (
     <div className="flex-col gap-6">
+      {hasNewVersion && (
+        <div style={{ background: 'var(--primary-hover)', color: '#fff', padding: '12px 16px', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Item was updated by another user.</span>
+          <button style={{ background: 'rgba(0,0,0,0.2)', border: 'none', color: '#fff' }} onClick={() => {
+            queryClient.setQueryData(['work-item', id], pollData);
+            queryClient.invalidateQueries({ queryKey: ['work-item-events', id] });
+            queryClient.invalidateQueries({ queryKey: ['work-item-comments', id] });
+          }}>Refresh Now</button>
+        </div>
+      )}
       {toastMsg && <Toast message={toastMsg} onClose={() => setToastMsg('')} />}
       <Link to="/items" className="text-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>← Back to list</Link>
       <div className="card">
-        <h1 className="text-2xl">{item.title}</h1>
+        <div className="flex justify-between items-start">
+          <h1 className="text-2xl">{item.title}</h1>
+          <div className="text-muted text-sm">Assignee: {item.assignee_id || <span className="text-danger">Unassigned</span>}</div>
+        </div>
         <div className="flex gap-2 mt-4 mb-6">
           <span className={`badge ${item.status}`}>{item.status.replace('_', ' ')}</span>
-          <span className={`badge ${item.priority === 'urgent' ? 'urgent' : ''}`}>{item.priority}</span>
+          <span className={`badge ${item.priority}`}>{item.priority}</span>
           {item.requires_approval && <span className="badge">Requires Approval</span>}
         </div>
         <div className="text-muted mb-8" style={{ background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '8px' }}>
@@ -468,6 +496,122 @@ function WorkItemDetail() {
           {item.allowedActions.length === 0 && <span className="text-muted text-sm">No actions available for your role/state.</span>}
         </div>
       </div>
+
+      <div className="flex gap-6" style={{ alignItems: 'flex-start' }}>
+        <div className="card flex-col gap-4" style={{ flex: 1 }}>
+          <h3 className="text-lg">Activity Timeline</h3>
+          <ItemEvents id={id} />
+        </div>
+        <div className="card flex-col gap-4" style={{ flex: 1 }}>
+          <h3 className="text-lg">Comments</h3>
+          <ItemComments id={id} allowedActions={item.allowedActions} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ItemEvents({ id }: { id: string }) {
+  const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
+    queryKey: ['work-item-events', id],
+    queryFn: ({ pageParam }) => api(`/api/v1/work-items/${id}/events${pageParam ? `?cursor=${pageParam}` : ''}`),
+    initialPageParam: '',
+    getNextPageParam: (lastPage) => lastPage.nextCursor || undefined
+  });
+
+  if (!data) return <div className="text-muted">Loading...</div>;
+
+  return (
+    <div className="flex-col gap-4">
+      {data.pages.map((p, i) => (
+        <React.Fragment key={i}>
+          {p.items.map((ev: any) => (
+            <div key={ev.id} className="text-sm" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
+              <div className="flex justify-between text-muted mb-1">
+                <span>{ev.actor_id.substring(0,8)}</span>
+                <span>{new Date(ev.created_at).toLocaleString()}</span>
+              </div>
+              <div style={{ color: 'var(--text)' }}>
+                <strong>{ev.type.replace('_', ' ')}</strong>
+                {ev.payload && Object.keys(ev.payload).length > 0 && (
+                  <pre style={{ background: 'rgba(0,0,0,0.1)', padding: 8, marginTop: 4, borderRadius: 4, fontSize: '0.75rem' }}>
+                    {JSON.stringify(ev.payload, null, 2)}
+                  </pre>
+                )}
+              </div>
+            </div>
+          ))}
+        </React.Fragment>
+      ))}
+      {hasNextPage && (
+        <button className="text-sm text-muted" onClick={() => fetchNextPage()} disabled={isFetchingNextPage} style={{ background: 'transparent', border: '1px solid var(--border)' }}>
+          {isFetchingNextPage ? 'Loading...' : 'Older Events'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ItemComments({ id, allowedActions }: { id: string, allowedActions: string[] }) {
+  const queryClient = useQueryClient();
+  const [newComment, setNewComment] = useState('');
+  const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
+    queryKey: ['work-item-comments', id],
+    queryFn: ({ pageParam }) => api(`/api/v1/work-items/${id}/comments${pageParam ? `?cursor=${pageParam}` : ''}`),
+    initialPageParam: '',
+    getNextPageParam: (lastPage) => lastPage.nextCursor || undefined
+  });
+
+  const commentMutation = useIdempotentMutation({
+    mutationFn: (vars: any) => api(`/api/v1/work-items/${id}/comments`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': vars.idempotencyKey },
+      body: JSON.stringify({ content: newComment })
+    }),
+    onSuccess: () => {
+      setNewComment('');
+      queryClient.invalidateQueries({ queryKey: ['work-item-comments', id] });
+      queryClient.invalidateQueries({ queryKey: ['work-item-events', id] });
+    }
+  });
+
+  return (
+    <div className="flex-col gap-4">
+      {data?.pages.map((p, i) => (
+        <React.Fragment key={i}>
+          {p.items.map((c: any) => (
+            <div key={c.id} className="text-sm" style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: 8 }}>
+              <div className="flex justify-between text-muted mb-2" style={{ fontSize: '0.75rem' }}>
+                <span>{c.author_id.substring(0,8)}</span>
+                <span>{new Date(c.created_at).toLocaleString()}</span>
+              </div>
+              <div style={{ color: 'var(--text)' }}>{c.content}</div>
+            </div>
+          ))}
+        </React.Fragment>
+      ))}
+      {hasNextPage && (
+        <button className="text-sm text-muted" onClick={() => fetchNextPage()} disabled={isFetchingNextPage} style={{ background: 'transparent', border: '1px solid var(--border)' }}>
+          {isFetchingNextPage ? 'Loading...' : 'More Comments'}
+        </button>
+      )}
+      {allowedActions.includes('comment') && (
+        <form onSubmit={(e) => { e.preventDefault(); commentMutation.mutate({}); }} className="flex-col gap-2 mt-2">
+          <textarea 
+            rows={2} 
+            placeholder="Add a comment..." 
+            value={newComment} 
+            onChange={e => setNewComment(e.target.value)} 
+            disabled={commentMutation.isPending} 
+            required 
+          />
+          <div style={{ textAlign: 'right' }}>
+            <button type="submit" disabled={commentMutation.isPending} style={{ padding: '8px 16px', fontSize: '0.875rem' }}>
+              {commentMutation.isPending ? 'Posting...' : 'Post Comment'}
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }
