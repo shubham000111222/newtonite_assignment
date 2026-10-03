@@ -59,12 +59,29 @@ async function seed() {
       const type = types[i % types.length];
       const status = statuses[i % statuses.length];
       const priority = priorities[i % priorities.length];
-      const assigneeId = (i % 2 === 0) ? users[i % users.length] : null;
+      
+      let assigneeId = (i % 2 === 0) ? users[i % users.length] : null;
+      // Force assigned if resolved or closed
+      if (status === 'resolved' || status === 'closed') {
+        assigneeId = users[i % users.length];
+      }
+
       const createdBy = users[(i + 1) % users.length];
       
+      // Random past dates up to 30 days
+      const updatedDaysAgo = Math.floor(Math.random() * 30);
+      const updatedStr = `NOW() - INTERVAL '${updatedDaysAgo} days'`;
+      
+      // 20% get a due_at (some past, some future)
+      let dueAtStr = 'NULL';
+      if (i % 5 === 0) {
+        const dueDaysOffset = Math.floor(Math.random() * 20) - 10; // -10 to +10 days
+        dueAtStr = `NOW() + INTERVAL '${dueDaysOffset} days'`;
+      }
+
       const res = await client.query(`
-        INSERT INTO work_items (team_id, title, description, type, status, priority, assignee_id, requires_approval, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id
+        INSERT INTO work_items (team_id, title, description, type, status, priority, assignee_id, requires_approval, created_by, updated_at, due_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, ${updatedStr}, ${dueAtStr}) RETURNING id
       `, [teamId, `Work Item ${i}`, `Description for item ${i}`, type, status, priority, assigneeId, i % 5 === 0, createdBy]);
       itemIds.push(res.rows[0].id);
     }

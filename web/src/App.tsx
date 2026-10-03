@@ -157,7 +157,7 @@ function Dashboard({ teamId, userId }: { teamId: string, userId: string }) {
   return (
     <div>
       <h1 className="text-2xl mb-8">Dashboard Overview</h1>
-      <div className="flex gap-6">
+      <div className="flex gap-6 mb-6">
         <Link to={`/items?assignee_id=${userId}`} className="card card-hoverable" style={{ flex: 1, textDecoration: 'none', color: 'inherit' }}>
           <div className="text-muted mb-2 text-sm uppercase tracking-wider">Assigned to me</div>
           <div className="text-2xl" style={{ fontSize: '3rem' }}>{stats.assignedToMe}</div>
@@ -172,6 +172,16 @@ function Dashboard({ teamId, userId }: { teamId: string, userId: string }) {
             <AlertCircle size={32} />
             {stats.unassignedUrgent}
           </div>
+        </Link>
+      </div>
+      <div className="flex gap-6">
+        <Link to={`/items?overdue=true`} className="card card-hoverable" style={{ flex: 1, border: '1px solid rgba(245, 158, 11, 0.3)', textDecoration: 'none', color: 'inherit' }}>
+          <div className="text-muted mb-2 text-sm uppercase tracking-wider">Stale / Overdue</div>
+          <div className="text-2xl" style={{ fontSize: '3rem', color: 'var(--warning-hover, #F59E0B)' }}>{stats.overdueStale}</div>
+        </Link>
+        <Link to={`/items`} className="card card-hoverable" style={{ flex: 1, textDecoration: 'none', color: 'inherit' }}>
+          <div className="text-muted mb-2 text-sm uppercase tracking-wider">Recently Changed</div>
+          <div className="text-2xl" style={{ fontSize: '3rem', color: 'var(--success-hover, #10B981)' }}>{stats.recentlyChanged}</div>
         </Link>
       </div>
     </div>
@@ -341,16 +351,22 @@ function WorkItemsList({ teamId, userId }: { teamId: string, userId: string }) {
                       <td><span className={`badge ${item.priority}`}>{item.priority}</span></td>
                       <td>
                         {item.assignee_id ? (
-                          <span className="text-muted">{item.assignee_id === userId ? 'Me' : item.assignee_id.substring(0,8)}</span>
+                          <span className="text-muted">{item.assignee_id === userId ? 'Me' : (item.assignee_name || item.assignee_id.substring(0,8))}</span>
                         ) : (
                           <div style={{ display: 'flex', alignItems: 'center' }}>
                             <span style={{ color: 'var(--danger)', fontWeight: 500 }}>Unassigned</span>
-                            {item.allowedActions?.includes('claim') && (
+                            {item.allowedActions?.includes('claim') ? (
                               <ClaimButton 
                                 itemId={item.id} 
                                 onClaimed={() => queryClient.invalidateQueries({ queryKey: ['work-items'] })} 
                                 onError={(msg) => setToastMsg(msg)} 
                               />
+                            ) : (
+                              item.actionReasons?.claim && (
+                                <span style={{ fontSize: '0.75rem', marginLeft: '8px', color: 'var(--text-muted)' }}>
+                                  ({item.actionReasons.claim})
+                                </span>
+                              )
                             )}
                           </div>
                         )}
@@ -464,7 +480,7 @@ function WorkItemDetail() {
       <div className="card">
         <div className="flex justify-between items-start">
           <h1 className="text-2xl">{item.title}</h1>
-          <div className="text-muted text-sm">Assignee: {item.assignee_id || <span className="text-danger">Unassigned</span>}</div>
+          <div className="text-muted text-sm">Assignee: {item.assignee_id ? (item.assignee_id === userId ? 'Me' : item.assignee_name) : <span className="text-danger">Unassigned</span>}</div>
         </div>
         <div className="flex gap-2 mt-4 mb-6">
           <span className={`badge ${item.status}`}>{item.status.replace('_', ' ')}</span>

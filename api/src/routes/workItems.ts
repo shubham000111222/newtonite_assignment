@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import * as crypto from 'crypto';
-import { can, WorkItemContext, UserContext, Action } from '../../../shared/src/policy';
+import { can, checkPermission, WorkItemContext, UserContext, Action } from '../../../shared/src/policy';
 
 // Business-logic error used inside withIdempotency handlers.
 // Throwing this ensures the transaction (including the idempotency key insert)
@@ -132,21 +132,30 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
   });
 
   // AllowedActions Helper
-  function getAllowedActions(user: UserContext, item: WorkItemContext) {
-    const actions: string[] = [];
+  function getPermissions(user: UserContext, item: WorkItemContext) {
+    const allowedActions: string[] = [];
+    const actionReasons: Record<string, string> = {};
     const allActions: Action[] = ['view', 'create_item', 'comment', 'claim', 'unassign', 'assign', 'change_priority', 'transition', 'approve_reject'];
     for (const action of allActions) {
-      if (can(user, action, item)) {
-        actions.push(action);
+      const p = checkPermission(user, action, item);
+      if (p.allowed) {
+        allowedActions.push(action);
+      } else if (p.reason) {
+        actionReasons[action] = p.reason;
       }
     }
-    return actions;
+    return { allowedActions, actionReasons };
   }
 
   // Get item
   fastify.get('/api/v1/work-items/:id', { preValidation: [(fastify as any).authenticate] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const { rows } = await pool.query('SELECT * FROM work_items WHERE id = $1', [id]);
+    const { rows } = await pool.query(`
+      SELECT w.*, u.name as assignee_name 
+      FROM work_items w 
+      LEFT JOIN users u ON w.assignee_id = u.id 
+      WHERE w.id = $1
+    `, [id]);
     if (rows.length === 0) return reply.status(404).send({ error: { message: 'Not found' } });
     
     const item = rows[0];
@@ -154,7 +163,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
     // Cross-team → 404, not 403, so we don't leak item existence
     if (!can(user, 'view', item)) return reply.status(404).send({ error: { message: 'Not found' } });
 
-    item.allowedActions = getAllowedActions(user, item);
+    Object.assign(item, getPermissions(user, item));
     return item;
   });
 
@@ -168,7 +177,12 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       return reply.status(404).send({ error: { message: 'Not found' } });
     }
 
-    let query = 'SELECT * FROM work_items WHERE team_id = $1';
+    let query = `
+      SELECT w.*, u.name as assignee_name 
+      FROM work_items w 
+      LEFT JOIN users u ON w.assignee_id = u.id 
+      WHERE w.team_id = $1
+    `;
     const values: any[] = [team_id];
     let vIdx = 2;
 
@@ -211,7 +225,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
     const nextCursor = rows.length === parseInt(limit) ? rows[rows.length - 1].id : null;
     
     rows.forEach((row: any) => {
-      row.allowedActions = getAllowedActions(user, row);
+      Object.assign(row, getPermissions(user, row));
     });
 
     return { items: rows, nextCursor };
@@ -278,12 +292,12 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       `, [eventRes.rows[0].id, {}]);
 
         await client.query('COMMIT');
-        updatedItem.allowedActions = getAllowedActions(user, updatedItem);
+        Object.assign(updatedItem, getPermissions(user, updatedItem));
         return updatedItem;
       }
       
       await client.query('COMMIT');
-      item.allowedActions = getAllowedActions(user, item);
+      Object.assign(item, getPermissions(user, item));
       return item;
     } catch (e) {
       await client.query('ROLLBACK').catch(() => {});
@@ -303,7 +317,8 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       // that won't change before the atomic UPDATE below.
       const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
       if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
-      if (!can(user, 'claim', rows[0])) throw new AppError(403, { error: { message: 'Forbidden' } });
+      const p = checkPermission(user, 'claim', rows[0]);
+      if (!p.allowed) throw new AppError(403, { error: { message: p.reason || 'Forbidden' } });
 
       // Atomic claim — the WHERE assignee_id IS NULL guard is the real
       // concurrency control. Only one concurrent caller wins.
@@ -333,7 +348,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
         INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
       `, [eventRes.rows[0].id, {}]);
 
-      updatedItem.allowedActions = getAllowedActions(user, updatedItem);
+      Object.assign(updatedItem, getPermissions(user, updatedItem));
       return updatedItem;
     });
   });
@@ -364,7 +379,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
         INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
       `, [eventRes.rows[0].id, {}]);
 
-      updatedItem.allowedActions = getAllowedActions(user, updatedItem);
+      Object.assign(updatedItem, getPermissions(user, updatedItem));
       return updatedItem;
     });
   });
@@ -397,7 +412,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
         INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
       `, [eventRes.rows[0].id, {}]);
 
-      updatedItem.allowedActions = getAllowedActions(user, updatedItem);
+      Object.assign(updatedItem, getPermissions(user, updatedItem));
       return updatedItem;
     });
   });
@@ -467,7 +482,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
         INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
       `, [eventRes.rows[0].id, {}]);
 
-      updatedItem.allowedActions = getAllowedActions(user, updatedItem);
+      Object.assign(updatedItem, getPermissions(user, updatedItem));
       return updatedItem;
     });
   });
@@ -503,7 +518,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
         INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
       `, [eventRes.rows[0].id, {}]);
 
-      updatedItem.allowedActions = getAllowedActions(user, updatedItem);
+      Object.assign(updatedItem, getPermissions(user, updatedItem));
       return updatedItem;
     });
   });
@@ -539,7 +554,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
         INSERT INTO jobs (type, event_id, payload) VALUES ('notification', $1, $2)
       `, [eventRes.rows[0].id, {}]);
 
-      updatedItem.allowedActions = getAllowedActions(user, updatedItem);
+      Object.assign(updatedItem, getPermissions(user, updatedItem));
       return updatedItem;
     });
   });
