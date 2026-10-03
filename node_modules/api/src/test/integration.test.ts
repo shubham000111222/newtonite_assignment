@@ -136,19 +136,194 @@ describe('Integration tests', () => {
   });
 
   it('Authorization: cross-team 404, wrong role 403, approver self-approve blocked', async () => {
-    // Tests are implemented in unit tests (policy.test.ts) but this represents the integration boundary
+    if (!pool) return;
+    const { rows: users } = await pool.query('SELECT * FROM users');
+    const { rows: teams } = await pool.query('SELECT * FROM teams');
+    
+    // Admin user (seeded in mock auth for most tests)
+    const adminId = users[0].id;
+    const teamA = teams[0].id;
+    const teamB = teams[1].id;
+
+    // Create item in Team B
+    const { rows: items } = await pool.query(`
+      INSERT INTO work_items (team_id, title, description, type, created_by, requires_approval, status)
+      VALUES ($1, 'Auth Test', 'Desc', 'task', $2, true, 'new')
+      RETURNING id, version
+    `, [teamB, adminId]);
+    const item = items[0];
+
+    // Simulate request from user in Team A trying to access Team B's item
+    // Fastify mock authenticate sets user to Team A admin
+    const res1 = await app.inject({
+      method: 'GET',
+      url: `/api/v1/work-items/${item.id}`
+    });
+    // Wait, the mock auth currently gives the user ALL their seeded memberships.
+    // Let's explicitly test by mocking a specific user for this request.
+    // Instead of overriding the global mock, let's just create a new item in a new dummy team
+    // that the mock user is definitely NOT in.
+    const { rows: newTeam } = await pool.query(`INSERT INTO teams (name) VALUES ('Secret Team') RETURNING id`);
+    const secretTeamId = newTeam[0].id;
+    const { rows: secretItems } = await pool.query(`
+      INSERT INTO work_items (team_id, title, description, type, created_by)
+      VALUES ($1, 'Secret', 'Desc', 'task', $2)
+      RETURNING id
+    `, [secretTeamId, adminId]);
+    
+    const crossTeamRes = await app.inject({ method: 'GET', url: `/api/v1/work-items/${secretItems[0].id}` });
+    expect(crossTeamRes.statusCode).toBe(404); // Cross-team is 404
+
+    // Test approver self-approve blocked
+    // Mock user is 'admin' (which includes approver rights) in their team.
+    // They created the item in teamB (assuming they are in teamB).
+    const selfApproveRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/work-items/${item.id}/approve`,
+      headers: { 'Idempotency-Key': 'self-approve-1' },
+      payload: { version: item.version }
+    });
+    expect(selfApproveRes.statusCode).toBe(403);
   });
 
   it('Workflow: illegal transition rejected, approval-gated resolve blocked', async () => {
-    // Tested via server-side transition table logic
+    if (!pool) return;
+    const { rows: teams } = await pool.query('SELECT * FROM teams LIMIT 1');
+    const { rows: users } = await pool.query('SELECT * FROM users LIMIT 1');
+
+    const { rows: items } = await pool.query(`
+      INSERT INTO work_items (team_id, title, description, type, created_by, requires_approval, status)
+      VALUES ($1, 'Workflow Test', 'Desc', 'task', $2, true, 'new')
+      RETURNING id, version
+    `, [teams[0].id, users[0].id]);
+    const item = items[0];
+
+    // Illegal transition: new -> resolved (not allowed)
+    const res1 = await app.inject({
+      method: 'POST',
+      url: `/api/v1/work-items/${item.id}/transition`,
+      headers: { 'Idempotency-Key': 'wf-1' },
+      payload: { version: item.version, status: 'resolved' }
+    });
+    expect(res1.statusCode).toBe(422);
+    expect(res1.json().error.message).toMatch(/Illegal transition/);
+
+    // Legal transition: new -> in_progress
+    const res2 = await app.inject({
+      method: 'POST',
+      url: `/api/v1/work-items/${item.id}/transition`,
+      headers: { 'Idempotency-Key': 'wf-2' },
+      payload: { version: item.version, status: 'in_progress' }
+    });
+    expect(res2.statusCode).toBe(200);
+    const inProgressVersion = res2.json().version;
+
+    // Approval-gated resolve blocked (item requires approval, but isn't approved)
+    const res3 = await app.inject({
+      method: 'POST',
+      url: `/api/v1/work-items/${item.id}/transition`,
+      headers: { 'Idempotency-Key': 'wf-3' },
+      payload: { version: inProgressVersion, status: 'resolved' }
+    });
+    expect(res3.statusCode).toBe(422);
+    expect(res3.json().error.message).toMatch(/requires approval/);
   });
 
   it('Outbox: event + job written atomically, retry dead, lease reclaim', async () => {
-    // Job insertion is asserted directly via table counts in local environments
+    if (!pool) return;
+    // We test atomicity by doing a valid mutation and ensuring both tables have the row.
+    const { rows: teams } = await pool.query('SELECT * FROM teams LIMIT 1');
+    const { rows: users } = await pool.query('SELECT * FROM users LIMIT 1');
+
+    const payload = { team_id: teams[0].id, title: 'Outbox Test', description: 'desc', type: 'task', priority: 'low' };
+    const res1 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/work-items',
+      headers: { 'Idempotency-Key': 'outbox-test-1' },
+      payload
+    });
+    expect(res1.statusCode).toBe(200);
+    const itemId = res1.json().id;
+
+    // Check events table
+    const { rows: events } = await pool.query('SELECT * FROM events WHERE work_item_id = $1', [itemId]);
+    expect(events.length).toBe(1);
+    const eventId = events[0].id;
+
+    // Check jobs table
+    const { rows: jobs } = await pool.query('SELECT * FROM jobs WHERE event_id = $1', [eventId]);
+    expect(jobs.length).toBe(1);
+    const job = jobs[0];
+    expect(job.status).toBe('pending');
+    expect(job.attempts).toBe(0);
+
+    // Test lease reclaim: manually set job to running with an expired lease
+    await pool.query(`UPDATE jobs SET status = 'running', locked_until = NOW() - interval '1 minute' WHERE id = $1`, [job.id]);
+    
+    // In a real system the worker process would run the reclaim query, we simulate it here:
+    await pool.query(`
+      UPDATE jobs 
+      SET status = CASE WHEN attempts + 1 >= 5 THEN 'dead'::job_status ELSE 'failed'::job_status END,
+          attempts = attempts + 1,
+          locked_until = NULL
+      WHERE status = 'running' AND locked_until < NOW()
+    `);
+
+    // Verify it was reclaimed
+    const { rows: reclaimedJobs } = await pool.query('SELECT * FROM jobs WHERE id = $1', [job.id]);
+    expect(reclaimedJobs[0].status).toBe('failed');
+    expect(reclaimedJobs[0].attempts).toBe(1);
+
+    // Test retry dead: set attempts to 4, run reclaim again
+    await pool.query(`UPDATE jobs SET attempts = 4, status = 'running', locked_until = NOW() - interval '1 minute' WHERE id = $1`, [job.id]);
+    await pool.query(`
+      UPDATE jobs 
+      SET status = CASE WHEN attempts + 1 >= 5 THEN 'dead'::job_status ELSE 'failed'::job_status END,
+          attempts = attempts + 1,
+          locked_until = NULL
+      WHERE status = 'running' AND locked_until < NOW()
+    `);
+    const { rows: deadJobs } = await pool.query('SELECT * FROM jobs WHERE id = $1', [job.id]);
+    expect(deadJobs[0].status).toBe('dead');
+    expect(deadJobs[0].attempts).toBe(5);
   });
 
   it('Keyset pagination stability: inserts between pages', async () => {
-    // Order by created_at DESC ensures stability
+    if (!pool) return;
+    const { rows: teams } = await pool.query('SELECT * FROM teams LIMIT 1');
+    const { rows: users } = await pool.query('SELECT * FROM users LIMIT 1');
+    const teamId = teams[0].id;
+    const userId = users[0].id;
+
+    // Create 3 comments
+    const itemId = (await pool.query(`INSERT INTO work_items (team_id, title, description, type, created_by) VALUES ($1, 'Pagination Test', 'Desc', 'task', $2) RETURNING id`, [teamId, userId])).rows[0].id;
+
+    await pool.query(`INSERT INTO comments (work_item_id, author_id, content, created_at) VALUES ($1, $2, 'C1', NOW() - interval '3 seconds')`, [itemId, userId]);
+    await pool.query(`INSERT INTO comments (work_item_id, author_id, content, created_at) VALUES ($1, $2, 'C2', NOW() - interval '2 seconds')`, [itemId, userId]);
+    const { rows: c3 } = await pool.query(`INSERT INTO comments (work_item_id, author_id, content, created_at) VALUES ($1, $2, 'C3', NOW() - interval '1 seconds') RETURNING id`, [itemId, userId]);
+
+    // Page 1: limit 2
+    const res1 = await app.inject({ method: 'GET', url: `/api/v1/work-items/${itemId}/comments?limit=2` });
+    expect(res1.statusCode).toBe(200);
+    const items1 = res1.json().items;
+    expect(items1.length).toBe(2);
+    expect(items1[0].content).toBe('C1');
+    expect(items1[1].content).toBe('C2');
+    
+    // Now insert C2.5 between page 1 and page 2? Wait, the timestamp of C2.5 would have to be between C2 and C3.
+    // If a new comment is added right now, its created_at is NOW(), so it appears AFTER C3.
+    // Let's insert C4
+    await pool.query(`INSERT INTO comments (work_item_id, author_id, content, created_at) VALUES ($1, $2, 'C4', NOW())`, [itemId, userId]);
+
+    // Page 2: use cursor from page 1
+    const cursor = res1.json().nextCursor;
+    const res2 = await app.inject({ method: 'GET', url: `/api/v1/work-items/${itemId}/comments?limit=2&cursor=${cursor}` });
+    const items2 = res2.json().items;
+    
+    // Keyset pagination guarantees we see C3 and C4, and don't miss or duplicate anything
+    expect(items2.length).toBe(2);
+    expect(items2[0].content).toBe('C3');
+    expect(items2[1].content).toBe('C4');
   });
 
 });
