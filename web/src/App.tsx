@@ -67,6 +67,41 @@ function ErrorMessage({ error, retry }: { error: Error, retry?: () => void }) {
   );
 }
 
+function formatRelativeTime(dateStr: string) {
+  if (!dateStr) return '';
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  const daysDifference = Math.round((new Date(dateStr).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+  return rtf.format(daysDifference, 'day');
+}
+
+function ClaimButton({ itemId, onClaimed, onError }: { itemId: string, onClaimed: () => void, onError: (msg: string) => void }) {
+  const claimMutation = useIdempotentMutation({
+    mutationFn: (vars: any) => api(`/api/v1/work-items/${itemId}/claim`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': vars.idempotencyKey }
+    }),
+    onSuccess: onClaimed,
+    onError: (err: any) => {
+      if (err.cause?.status === 409 && err.cause?.item) {
+        const owner = err.cause.item.assignee_id || 'someone else';
+        onError(`Conflict! Claimed by ${owner.substring(0,8)}...`);
+      } else {
+        onError(err.message);
+      }
+    }
+  });
+
+  return (
+    <button 
+      style={{ padding: '4px 8px', fontSize: '0.75rem', marginLeft: '8px' }} 
+      disabled={claimMutation.isPending} 
+      onClick={(e) => { e.preventDefault(); claimMutation.mutate({}); }}
+    >
+      {claimMutation.isPending ? '...' : 'Claim'}
+    </button>
+  );
+}
+
 function Login({ setToken }: { setToken: (t: string) => void }) {
   const [email, setEmail] = useState('user0@example.com');
   const [password, setPassword] = useState('password123');
@@ -288,27 +323,53 @@ function WorkItemsList({ teamId, userId }: { teamId: string, userId: string }) {
               <th>Title</th>
               <th>Status</th>
               <th>Priority</th>
+              <th>Assignee</th>
+              <th>Updated</th>
+              <th>Due</th>
               <th style={{ textAlign: 'right' }}>Action</th>
             </tr>
           </thead>
           <tbody>
             {data.pages.map((page, i) => (
               <React.Fragment key={i}>
-                {page.items.map((item: any) => (
-                  <tr key={item.id}>
-                    <td style={{ fontWeight: 500 }}><Link to={`/items/${item.id}`}>{item.title}</Link></td>
-                    <td><span className={`badge ${item.status}`}>{item.status.replace('_', ' ')}</span></td>
-                    <td><span className={`badge ${item.priority === 'urgent' ? 'urgent' : ''}`}>{item.priority}</span></td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Link to={`/items/${item.id}`} style={{ fontSize: '0.875rem' }}>View →</Link>
-                    </td>
-                  </tr>
-                ))}
+                {page.items.map((item: any) => {
+                  const isOverdue = item.due_at && new Date(item.due_at) < new Date() && !['resolved', 'closed'].includes(item.status);
+                  return (
+                    <tr key={item.id}>
+                      <td style={{ fontWeight: 500 }}><Link to={`/items/${item.id}`}>{item.title}</Link></td>
+                      <td><span className={`badge ${item.status}`}>{item.status.replace('_', ' ')}</span></td>
+                      <td><span className={`badge ${item.priority}`}>{item.priority}</span></td>
+                      <td>
+                        {item.assignee_id ? (
+                          <span className="text-muted">{item.assignee_id === userId ? 'Me' : item.assignee_id.substring(0,8)}</span>
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <span style={{ color: 'var(--danger)', fontWeight: 500 }}>Unassigned</span>
+                            {item.allowedActions?.includes('claim') && (
+                              <ClaimButton 
+                                itemId={item.id} 
+                                onClaimed={() => queryClient.invalidateQueries({ queryKey: ['work-items'] })} 
+                                onError={(msg) => setToastMsg(msg)} 
+                              />
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td className="text-muted" style={{ fontSize: '0.875rem' }}>{formatRelativeTime(item.updated_at)}</td>
+                      <td style={{ fontSize: '0.875rem', color: isOverdue ? 'var(--danger)' : 'var(--text-muted)' }}>
+                        {item.due_at ? new Date(item.due_at).toLocaleDateString() : '—'}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <Link to={`/items/${item.id}`} style={{ fontSize: '0.875rem' }}>View →</Link>
+                      </td>
+                    </tr>
+                  );
+                })}
               </React.Fragment>
             ))}
             {data.pages[0].items.length === 0 && (
               <tr>
-                <td colSpan={4} style={{ textAlign: 'center', padding: '48px', color: 'var(--text-muted)' }}>
+                <td colSpan={7} style={{ textAlign: 'center', padding: '48px', color: 'var(--text-muted)' }}>
                   No work items found matching filters.
                 </td>
               </tr>
