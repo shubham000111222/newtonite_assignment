@@ -259,3 +259,19 @@ input:focus, select:focus, textarea:focus {
   from { transform: translateY(100%) opacity(0); }
   to { transform: translateY(0) opacity(1); }
 }
+
+/* Custom Scrollbar for premium feel */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1); 
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15); 
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25); 
+}
