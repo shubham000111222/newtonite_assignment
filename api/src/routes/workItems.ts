@@ -35,6 +35,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query('SAVEPOINT idemp_sp');
 
       // Attempt to insert idempotency key
       try {
@@ -44,6 +45,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
         `, [key, userId, route, requestHash]);
       } catch (err: any) {
         if (err.code === '23505') { // unique_violation
+          await client.query('ROLLBACK TO SAVEPOINT idemp_sp');
           // Key exists, fetch it
           const { rows } = await client.query('SELECT * FROM idempotency_keys WHERE key = $1 AND user_id = $2', [key, userId]);
           const existing = rows[0];
@@ -246,7 +248,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
+      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 ', [id]);
       if (rows.length === 0) {
         await client.query('ROLLBACK');
         return reply.status(404).send({ error: { message: 'Not found' } });
@@ -318,7 +320,16 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
       if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
       const p = checkPermission(user, 'claim', rows[0]);
-      if (!p.allowed) throw new AppError(403, { error: { message: p.reason || 'Forbidden' } });
+
+      if (!p.allowed) {
+        if (p.reason === 'Already assigned') {
+          const current = await client.query('SELECT u.name FROM work_items w LEFT JOIN users u ON w.assignee_id = u.id WHERE w.id = $1', [id]);
+          throw new AppError(409, { 
+            error: { code: 'CONFLICT', message: `Item was already claimed by ${current.rows[0]?.name || 'another user'}` } 
+          });
+        }
+        throw new AppError(403, { error: { message: p.reason || 'Forbidden' } });
+      }
 
       // Atomic claim — the WHERE assignee_id IS NULL guard is the real
       // concurrency control. Only one concurrent caller wins.
@@ -330,12 +341,10 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       `, [user.id, id]);
 
       if (updateRes.rows.length === 0) {
-        // Someone else claimed it between our FOR UPDATE read and now
-        // (possible if FOR UPDATE was released by a savepoint or if the
-        // item was updated by a DDL — belt-and-suspenders).
-        const current = await client.query('SELECT assignee_id FROM work_items WHERE id = $1', [id]);
+        // Fallback for atomic failure if somehow the policy check passed
+        const current = await client.query('SELECT u.name FROM work_items w LEFT JOIN users u ON w.assignee_id = u.id WHERE w.id = $1', [id]);
         throw new AppError(409, { 
-          error: { code: 'CONFLICT', message: 'Already assigned', assignee_id: current.rows[0]?.assignee_id } 
+          error: { code: 'CONFLICT', message: `Item was already claimed by ${current.rows[0]?.name || 'another user'}` } 
         });
       }
 
@@ -359,7 +368,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const { id } = req.params as { id: string };
       const user = req.user as UserContext;
 
-      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
+      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 ', [id]);
       if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
       if (!can(user, 'unassign', rows[0])) throw new AppError(403, { error: { message: 'Forbidden' } });
 
@@ -392,7 +401,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const input = assignSchema.parse(req.body);
       const user = req.user as UserContext;
 
-      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
+      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 ', [id]);
       if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
       if (!can(user, 'assign', rows[0])) throw new AppError(403, { error: { message: 'Forbidden' } });
 
@@ -442,11 +451,15 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const input = transitionSchema.parse(req.body);
       const user = req.user as UserContext;
 
-      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
+      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 ', [id]);
       if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
       const item = rows[0];
 
-      if (!can(user, 'transition', item)) throw new AppError(403, { error: { message: 'Forbidden' } });
+      const p = checkPermission(user, 'transition', item);
+      if (!p.allowed) {
+        console.log('TRANSITION FORBIDDEN', p.reason, user, item);
+        throw new AppError(403, { error: { message: 'Forbidden' } });
+      }
       if (item.version !== input.version) throw new AppError(409, { error: { code: 'CONFLICT', message: 'Version mismatch', item } });
       
       if (!isValidTransition(item.status, input.status)) {
@@ -495,7 +508,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const input = approveSchema.parse(req.body);
       const user = req.user as UserContext;
 
-      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
+      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 ', [id]);
       if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
       const item = rows[0];
 
@@ -531,7 +544,7 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       const input = rejectSchema.parse(req.body);
       const user = req.user as UserContext;
 
-      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 FOR UPDATE', [id]);
+      const { rows } = await client.query('SELECT * FROM work_items WHERE id = $1 ', [id]);
       if (rows.length === 0) throw new AppError(404, { error: { message: 'Not found' } });
       const item = rows[0];
 

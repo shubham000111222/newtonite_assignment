@@ -13,6 +13,20 @@ Newtonite is a workflow tracking tool demonstrating a Postgres-backed, transacti
    npm install
    ```
 
+2. **Docker Compose (Recommended)**
+   To run the entire stack (PostgreSQL, API, Worker, Web) in Docker:
+   ```bash
+   docker compose up -d
+   ```
+   *Note: If you use Docker, run migrations and seeding inside the API container:*
+   ```bash
+   docker compose exec api npm run migrate -w api
+   docker compose exec api npm run seed -w api
+   ```
+   The app will be available at `http://localhost:5173`.
+
+3. **Manual Setup (Without Docker)**
+
 2. **Setup Database**
    Configure your database URL (default is `postgres://postgres:password@localhost:5432/newtonite`).
    Run migrations and seed the database:

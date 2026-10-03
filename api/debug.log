@@ -1,0 +1,35 @@
+{"event":"CLAIM_START","id":"3dccc091-74e9-4f46-9f9a-5ad71399ca4c","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":null,"policy_allowed":true}
+{"event":"ABOUT_TO_UPDATE"}
+{"event":"UPDATE_RES_LENGTH","length":1}
+{"event":"CLAIM_START","id":"3dccc091-74e9-4f46-9f9a-5ad71399ca4c","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"3dccc091-74e9-4f46-9f9a-5ad71399ca4c","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"3dccc091-74e9-4f46-9f9a-5ad71399ca4c","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"3dccc091-74e9-4f46-9f9a-5ad71399ca4c","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"627fd2fe-ed9b-4f54-bc97-6747c1c6fbff","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":null,"policy_allowed":true}
+{"event":"ABOUT_TO_UPDATE"}
+{"event":"UPDATE_RES_LENGTH","length":1}
+{"event":"CLAIM_START","id":"627fd2fe-ed9b-4f54-bc97-6747c1c6fbff","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"627fd2fe-ed9b-4f54-bc97-6747c1c6fbff","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"627fd2fe-ed9b-4f54-bc97-6747c1c6fbff","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"627fd2fe-ed9b-4f54-bc97-6747c1c6fbff","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"c6e323e5-16b3-4606-ad11-623f77a76aa0","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":null,"policy_allowed":true}
+{"event":"ABOUT_TO_UPDATE"}
+{"event":"UPDATE_RES_LENGTH","length":1}
+{"event":"CLAIM_START","id":"c6e323e5-16b3-4606-ad11-623f77a76aa0","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"c6e323e5-16b3-4606-ad11-623f77a76aa0","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"c6e323e5-16b3-4606-ad11-623f77a76aa0","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"c6e323e5-16b3-4606-ad11-623f77a76aa0","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"0587d72d-2cd2-4287-ba2e-b08f5c99cbb1","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":null,"policy_allowed":true}
+{"event":"ABOUT_TO_UPDATE"}
+{"event":"UPDATE_RES_LENGTH","length":1}
+{"event":"CLAIM_START","id":"0587d72d-2cd2-4287-ba2e-b08f5c99cbb1","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"0587d72d-2cd2-4287-ba2e-b08f5c99cbb1","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"0587d72d-2cd2-4287-ba2e-b08f5c99cbb1","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"0587d72d-2cd2-4287-ba2e-b08f5c99cbb1","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"bcebed82-f65a-4bd6-b94f-87c04c65d6a3","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":null,"policy_allowed":true}
+{"event":"ABOUT_TO_UPDATE"}
+{"event":"UPDATE_RES_LENGTH","length":1}
+{"event":"CLAIM_START","id":"bcebed82-f65a-4bd6-b94f-87c04c65d6a3","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"bcebed82-f65a-4bd6-b94f-87c04c65d6a3","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"bcebed82-f65a-4bd6-b94f-87c04c65d6a3","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}
+{"event":"CLAIM_START","id":"bcebed82-f65a-4bd6-b94f-87c04c65d6a3","user_id":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","db_assignee":"1cd763b2-2bfc-4782-a780-5e5dda517cf1","policy_allowed":false,"policy_reason":"Already assigned"}

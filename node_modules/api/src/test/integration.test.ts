@@ -13,6 +13,11 @@ describe('Integration tests', () => {
     // Only connect if env var is set, to allow skipping if no DB
     if (process.env.DATABASE_URL) {
       pool = new Pool({ connectionString: process.env.DATABASE_URL });
+      
+      // Clean up tests from dirty states
+      await pool.query('TRUNCATE idempotency_keys, jobs, events, comments CASCADE');
+      await pool.query('TRUNCATE work_items CASCADE');
+
       app = Fastify();
       app.decorate('db', pool);
       
@@ -192,8 +197,8 @@ describe('Integration tests', () => {
     const { rows: users } = await pool.query('SELECT * FROM users LIMIT 1');
 
     const { rows: items } = await pool.query(`
-      INSERT INTO work_items (team_id, title, description, type, created_by, requires_approval, status)
-      VALUES ($1, 'Workflow Test', 'Desc', 'task', $2, true, 'new')
+      INSERT INTO work_items (team_id, title, description, type, created_by, requires_approval, status, assignee_id)
+      VALUES ($1, 'Workflow Test', 'Desc', 'task', $2, true, 'new', $2)
       RETURNING id, version
     `, [teams[0].id, users[0].id]);
     const item = items[0];
