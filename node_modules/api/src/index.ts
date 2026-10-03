@@ -6,6 +6,8 @@ import { Pool } from 'pg';
 import * as argon2 from 'argon2';
 import { z } from 'zod';
 import * as crypto from 'crypto';
+import workItemsRoutes from './routes/workItems';
+import dashboardRoutes from './routes/dashboard';
 
 const fastify = Fastify({ 
   logger: true,
@@ -27,13 +29,14 @@ fastify.setErrorHandler((error, request, reply) => {
   request.log.error(error);
   if (error instanceof z.ZodError) {
     reply.status(400).send({
-      error: { code: 'VALIDATION_ERROR', message: 'Invalid input', details: error.errors }
+      error: { code: 'VALIDATION_ERROR', message: 'Invalid input', details: error.issues }
     });
     return;
   }
-  if (error.statusCode) {
-    reply.status(error.statusCode).send({
-      error: { code: error.code || 'ERROR', message: error.message }
+  const err = error as any;
+  if (err.statusCode) {
+    reply.status(err.statusCode).send({
+      error: { code: err.code || 'ERROR', message: err.message }
     });
     return;
   }
@@ -65,13 +68,13 @@ fastify.post('/api/v1/auth/login', async (request, reply) => {
   // Fetch memberships
   const membershipRows = await pool.query('SELECT team_id, role FROM memberships WHERE user_id = $1', [user.id]);
   const memberships: Record<string, string> = {};
-  membershipRows.rows.forEach(r => memberships[r.team_id] = r.role);
+  membershipRows.rows.forEach((r: any) => memberships[r.team_id] = r.role);
 
   const token = fastify.jwt.sign({ id: user.id, name: user.name, memberships });
   return { token, user: { id: user.id, name: user.name, memberships } };
 });
 
-fastify.decorate('authenticate', async (request, reply) => {
+fastify.decorate('authenticate', async (request: any, reply: any) => {
   try {
     await request.jwtVerify();
   } catch (err) {
@@ -79,9 +82,12 @@ fastify.decorate('authenticate', async (request, reply) => {
   }
 });
 
-fastify.get('/api/v1/auth/me', { preValidation: [fastify.authenticate] }, async (request, reply) => {
-  return { user: request.user };
+fastify.get('/api/v1/auth/me', { preValidation: [(fastify as any).authenticate] }, async (request, reply) => {
+  return { user: (request as any).user };
 });
+
+fastify.register(workItemsRoutes);
+fastify.register(dashboardRoutes);
 
 const start = async () => {
   try {
