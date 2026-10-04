@@ -227,9 +227,6 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
     if (req.query.recently_changed === 'true') {
       query += ` AND ${DASHBOARD_FILTERS.recently_changed}`;
     }
-    if (req.query.unassigned_urgent === 'true') {
-      query += ` AND ${DASHBOARD_FILTERS.unassigned_urgent}`;
-    }
     if (q) {
       query += ` AND search @@ websearch_to_tsquery('english', $${vIdx++})`;
       values.push(q);

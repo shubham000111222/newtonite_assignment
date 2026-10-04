@@ -340,7 +340,7 @@ describe('Integration tests', () => {
     const userRes = await pool.query("INSERT INTO users (email, password_hash, name) VALUES ('u_closed@x.com', 'h', 'U') RETURNING id");
     const userId = userRes.rows[0].id;
     await pool.query("INSERT INTO memberships (user_id, team_id, role) VALUES ($1, $2, 'member')", [userId, teamId]);
-    const itemRes = await pool.query("INSERT INTO work_items (team_id, title, description, status, priority, created_by) VALUES ($1, 'Closed Task', 'Desc', 'closed', 'low', $2) RETURNING id", [teamId, userId]);
+    const itemRes = await pool.query("INSERT INTO work_items (team_id, title, description, type, status, priority, created_by) VALUES ($1, 'Closed Task', 'Desc', 'task', 'closed', 'low', $2) RETURNING id", [teamId, userId]);
     const itemId = itemRes.rows[0].id;
     const token = app.jwt.sign({ id: userId, name: 'U', memberships: { [teamId]: 'member' } });
     const res = await app.inject({
@@ -388,7 +388,7 @@ describe('Integration tests', () => {
     // 2. Get list count
     const listRes = await app.inject({
       method: 'GET',
-      url: '/api/v1/work-items?assignee_id=unassigned&unassigned_urgent=true'
+      url: '/api/v1/work-items?assignee_id=unassigned&priority=urgent&is_open=true'
     });
     expect(listRes.statusCode).toBe(200);
     const listData = JSON.parse(listRes.body);

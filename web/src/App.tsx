@@ -167,7 +167,7 @@ function Dashboard({ teamId, userId }: { teamId: string, userId: string }) {
           <div className="text-muted mb-2 text-sm uppercase tracking-wider">Awaiting Approval</div>
           <div className="text-2xl" style={{ fontSize: '3rem', color: 'var(--primary-hover)' }}>{stats.awaitingApproval}</div>
         </Link>
-        <Link to={`/items?unassigned_urgent=true`} className="card card-hoverable" style={{ flex: 1, border: '1px solid rgba(239, 68, 68, 0.3)', textDecoration: 'none', color: 'inherit' }}>
+        <Link to={`/items?assignee_id=unassigned&priority=urgent&is_open=true`} className="card card-hoverable" style={{ flex: 1, border: '1px solid rgba(239, 68, 68, 0.3)', textDecoration: 'none', color: 'inherit' }}>
           <div className="text-muted mb-2 text-sm uppercase tracking-wider">Unassigned Urgent</div>
           <div className="text-2xl flex items-center gap-2" style={{ fontSize: '3rem', color: 'var(--danger-hover)' }}>
             <AlertCircle size={32} />
@@ -202,7 +202,6 @@ function WorkItemsList({ teamId, userId, userMemberships }: { teamId: string, us
   const isOpenFilter = searchParams.get('is_open') || '';
   const awaitingApprovalFilter = searchParams.get('awaiting_approval') || '';
   const recentlyChangedFilter = searchParams.get('recently_changed') || '';
-  const unassignedUrgentFilter = searchParams.get('unassigned_urgent') || '';
 
   const [isCreating, setIsCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
@@ -214,7 +213,7 @@ function WorkItemsList({ teamId, userId, userMemberships }: { teamId: string, us
     data, isLoading, error, refetch, 
     fetchNextPage, hasNextPage, isFetchingNextPage 
   } = useInfiniteQuery({
-    queryKey: ['work-items', teamId, statusFilter, priorityFilter, overdueFilter, qFilter, assigneeFilter, isOpenFilter, awaitingApprovalFilter, recentlyChangedFilter, unassignedUrgentFilter],
+    queryKey: ['work-items', teamId, statusFilter, priorityFilter, overdueFilter, qFilter, assigneeFilter, isOpenFilter, awaitingApprovalFilter, recentlyChangedFilter],
     queryFn: ({ pageParam }) => {
       const p = new URLSearchParams();
       p.set('team_id', teamId);
@@ -226,7 +225,6 @@ function WorkItemsList({ teamId, userId, userMemberships }: { teamId: string, us
       if (isOpenFilter) p.set('is_open', isOpenFilter);
       if (awaitingApprovalFilter) p.set('awaiting_approval', awaitingApprovalFilter);
       if (recentlyChangedFilter) p.set('recently_changed', recentlyChangedFilter);
-      if (unassignedUrgentFilter) p.set('unassigned_urgent', unassignedUrgentFilter);
       if (pageParam) p.set('cursor', pageParam);
       return api(`/api/v1/work-items?${p.toString()}`);
     },
