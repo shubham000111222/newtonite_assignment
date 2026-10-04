@@ -7,6 +7,7 @@
 - **Single Region/Database**: We assume a single primary database. In a highly distributed setup, this could be a bottleneck.
 - **In-App Notifications Only**: We only create internal notification records. Email or Slack integrations are omitted for scope.
 - **Untuned Search Ranking**: We use basic PostgreSQL `websearch_to_tsquery` without advanced ranking or weighting logic.
+- **Flat Team Hierarchy**: Users can belong to multiple teams, but there is no concept of nested organizational units, meaning "All My Teams" aggregates via strict SQL `ANY($1)` arrays rather than hierarchical indexing.
 
 ### What I'd do with another week
 - Implement a robust WebSocket service (perhaps separated, using Redis PubSub or Postgres LISTEN/NOTIFY internally) to stream live events to users looking at the same item.

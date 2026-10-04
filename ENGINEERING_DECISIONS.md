@@ -14,3 +14,9 @@
 
 5. **What Was Intentionally Not Built**
    I omitted complex abstractions like Prisma or TypeORM in favor of raw SQL (`pg` driver) because raw SQL provides transparent control over locking (`FOR UPDATE SKIP LOCKED`), transactional boundaries, and advanced features like JSONB and `tsvector` without ORM overhead. I also omitted a complex frontend routing setup, keeping it strictly minimal to demonstrate end-to-end functionality rather than building a heavy SPA.
+
+6. **Native URL Parameters for State Synchronization**
+   To keep the "Dashboard" and the "Work Items List" unified, we rely strictly on native query parameters (e.g., `assignee_id=unassigned&priority=urgent`) rather than artificial boolean flags. This ensures the UI filters perfectly reflect the active state when users navigate from a dashboard shortcut card, preventing desync between the API request and visual UI dropdowns.
+
+7. **Dockerized Deterministic Environment**
+   We utilize Docker Compose to orchestrate the database alongside an automated startup script. This ensures schema migrations (`node-pg-migrate`) and seeding (`scripts/seed.ts`) run automatically upon instantiation, providing a friction-free "one-click" developer experience without manual database setup.
