@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import * as crypto from 'crypto';
 import { can, checkPermission, WorkItemContext, UserContext, Action } from '../../../shared/src/policy';
+import { DASHBOARD_FILTERS } from '../utils/dashboardFilters';
 
 // Business-logic error used inside withIdempotency handlers.
 // Throwing this ensures the transaction (including the idempotency key insert)
@@ -204,7 +205,9 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       query += ` AND priority = $${vIdx++}`;
       values.push(priority);
     }
-    if (assignee_id) {
+    if (assignee_id === 'unassigned') {
+      query += ` AND assignee_id IS NULL`;
+    } else if (assignee_id) {
       query += ` AND assignee_id = $${vIdx++}`;
       values.push(assignee_id);
     }
@@ -213,7 +216,19 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
       values.push(type);
     }
     if (overdue === 'true') {
-      query += ` AND due_at < NOW() AND status NOT IN ('resolved', 'closed')`;
+      query += ` AND ${DASHBOARD_FILTERS.overdue_stale}`;
+    }
+    if (req.query.is_open === 'true') {
+      query += ` AND ${DASHBOARD_FILTERS.is_open}`;
+    }
+    if (req.query.awaiting_approval === 'true') {
+      query += ` AND ${DASHBOARD_FILTERS.awaiting_approval}`;
+    }
+    if (req.query.recently_changed === 'true') {
+      query += ` AND ${DASHBOARD_FILTERS.recently_changed}`;
+    }
+    if (req.query.unassigned_urgent === 'true') {
+      query += ` AND ${DASHBOARD_FILTERS.unassigned_urgent}`;
     }
     if (q) {
       query += ` AND search @@ websearch_to_tsquery('english', $${vIdx++})`;

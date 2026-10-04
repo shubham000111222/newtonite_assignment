@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { UserContext } from '../../../shared/src/policy';
+import { DASHBOARD_FILTERS } from '../utils/dashboardFilters';
 
 export default async function dashboardRoutes(fastify: FastifyInstance) {
   const pool = (fastify as any).db;
@@ -23,33 +24,31 @@ export default async function dashboardRoutes(fastify: FastifyInstance) {
     const assignedToMePromise = pool.query(`
       SELECT COUNT(*) as count 
       FROM work_items 
-      WHERE team_id = ANY($1) AND assignee_id = $2 AND status NOT IN ('resolved', 'closed')
+      WHERE team_id = ANY($1) AND assignee_id = $2 AND ${DASHBOARD_FILTERS.is_open}
     `, [teamIds, user.id]);
 
     const awaitingApprovalPromise = pool.query(`
       SELECT COUNT(*) as count 
       FROM work_items 
-      WHERE team_id = ANY($1) AND requires_approval = true AND approval_state = 'pending' AND status NOT IN ('resolved', 'closed')
+      WHERE team_id = ANY($1) AND ${DASHBOARD_FILTERS.awaiting_approval}
     `, [teamIds]);
 
     const unassignedUrgentPromise = pool.query(`
       SELECT COUNT(*) as count 
       FROM work_items 
-      WHERE team_id = ANY($1) AND assignee_id IS NULL AND priority = 'urgent' AND status NOT IN ('resolved', 'closed')
+      WHERE team_id = ANY($1) AND ${DASHBOARD_FILTERS.unassigned_urgent}
     `, [teamIds]);
 
     const overdueStalePromise = pool.query(`
       SELECT COUNT(*) as count 
       FROM work_items 
-      WHERE team_id = ANY($1) AND status NOT IN ('resolved', 'closed') 
-      AND (due_at < NOW() OR updated_at < NOW() - INTERVAL '7 days')
+      WHERE team_id = ANY($1) AND ${DASHBOARD_FILTERS.overdue_stale}
     `, [teamIds]);
 
     const recentlyChangedPromise = pool.query(`
       SELECT COUNT(*) as count 
       FROM work_items 
-      WHERE team_id = ANY($1) 
-      AND updated_at >= NOW() - INTERVAL '1 day'
+      WHERE team_id = ANY($1) AND ${DASHBOARD_FILTERS.recently_changed}
     `, [teamIds]);
 
     const [assignedToMe, awaitingApproval, unassignedUrgent, overdueStale, recentlyChanged] = await Promise.all([

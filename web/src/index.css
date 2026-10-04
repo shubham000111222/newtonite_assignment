@@ -275,3 +275,9 @@ input:focus, select:focus, textarea:focus {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.25); 
 }
+
+option {
+  background: #111111; /* Dark background */
+  color: var(--text-main);
+}
+

@@ -159,15 +159,15 @@ function Dashboard({ teamId, userId }: { teamId: string, userId: string }) {
     <div>
       <h1 className="text-2xl mb-8">Dashboard Overview</h1>
       <div className="flex gap-6 mb-6">
-        <Link to={`/items?assignee_id=${userId}`} className="card card-hoverable" style={{ flex: 1, textDecoration: 'none', color: 'inherit' }}>
+        <Link to={`/items?assignee_id=${userId}&is_open=true`} className="card card-hoverable" style={{ flex: 1, textDecoration: 'none', color: 'inherit' }}>
           <div className="text-muted mb-2 text-sm uppercase tracking-wider">Assigned to me</div>
           <div className="text-2xl" style={{ fontSize: '3rem' }}>{stats.assignedToMe}</div>
         </Link>
-        <Link to={`/items?status=new`} className="card card-hoverable" style={{ flex: 1, textDecoration: 'none', color: 'inherit' }}>
+        <Link to={`/items?awaiting_approval=true`} className="card card-hoverable" style={{ flex: 1, textDecoration: 'none', color: 'inherit' }}>
           <div className="text-muted mb-2 text-sm uppercase tracking-wider">Awaiting Approval</div>
           <div className="text-2xl" style={{ fontSize: '3rem', color: 'var(--primary-hover)' }}>{stats.awaitingApproval}</div>
         </Link>
-        <Link to={`/items?priority=urgent`} className="card card-hoverable" style={{ flex: 1, border: '1px solid rgba(239, 68, 68, 0.3)', textDecoration: 'none', color: 'inherit' }}>
+        <Link to={`/items?unassigned_urgent=true`} className="card card-hoverable" style={{ flex: 1, border: '1px solid rgba(239, 68, 68, 0.3)', textDecoration: 'none', color: 'inherit' }}>
           <div className="text-muted mb-2 text-sm uppercase tracking-wider">Unassigned Urgent</div>
           <div className="text-2xl flex items-center gap-2" style={{ fontSize: '3rem', color: 'var(--danger-hover)' }}>
             <AlertCircle size={32} />
@@ -180,7 +180,7 @@ function Dashboard({ teamId, userId }: { teamId: string, userId: string }) {
           <div className="text-muted mb-2 text-sm uppercase tracking-wider">Stale / Overdue</div>
           <div className="text-2xl" style={{ fontSize: '3rem', color: 'var(--warning-hover, #F59E0B)' }}>{stats.overdueStale}</div>
         </Link>
-        <Link to={`/items`} className="card card-hoverable" style={{ flex: 1, textDecoration: 'none', color: 'inherit' }}>
+        <Link to={`/items?recently_changed=true`} className="card card-hoverable" style={{ flex: 1, textDecoration: 'none', color: 'inherit' }}>
           <div className="text-muted mb-2 text-sm uppercase tracking-wider">Recently Changed</div>
           <div className="text-2xl" style={{ fontSize: '3rem', color: 'var(--success-hover, #10B981)' }}>{stats.recentlyChanged}</div>
         </Link>
@@ -198,6 +198,11 @@ function WorkItemsList({ teamId, userId, userMemberships }: { teamId: string, us
   const overdueFilter = searchParams.get('overdue') || '';
   const qFilter = searchParams.get('q') || '';
   const assigneeFilter = searchParams.get('assignee_id') || '';
+  
+  const isOpenFilter = searchParams.get('is_open') || '';
+  const awaitingApprovalFilter = searchParams.get('awaiting_approval') || '';
+  const recentlyChangedFilter = searchParams.get('recently_changed') || '';
+  const unassignedUrgentFilter = searchParams.get('unassigned_urgent') || '';
 
   const [isCreating, setIsCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
@@ -209,7 +214,7 @@ function WorkItemsList({ teamId, userId, userMemberships }: { teamId: string, us
     data, isLoading, error, refetch, 
     fetchNextPage, hasNextPage, isFetchingNextPage 
   } = useInfiniteQuery({
-    queryKey: ['work-items', teamId, statusFilter, priorityFilter, overdueFilter, qFilter, assigneeFilter],
+    queryKey: ['work-items', teamId, statusFilter, priorityFilter, overdueFilter, qFilter, assigneeFilter, isOpenFilter, awaitingApprovalFilter, recentlyChangedFilter, unassignedUrgentFilter],
     queryFn: ({ pageParam }) => {
       const p = new URLSearchParams();
       p.set('team_id', teamId);
@@ -218,6 +223,10 @@ function WorkItemsList({ teamId, userId, userMemberships }: { teamId: string, us
       if (overdueFilter) p.set('overdue', overdueFilter);
       if (qFilter) p.set('q', qFilter);
       if (assigneeFilter) p.set('assignee_id', assigneeFilter);
+      if (isOpenFilter) p.set('is_open', isOpenFilter);
+      if (awaitingApprovalFilter) p.set('awaiting_approval', awaitingApprovalFilter);
+      if (recentlyChangedFilter) p.set('recently_changed', recentlyChangedFilter);
+      if (unassignedUrgentFilter) p.set('unassigned_urgent', unassignedUrgentFilter);
       if (pageParam) p.set('cursor', pageParam);
       return api(`/api/v1/work-items?${p.toString()}`);
     },
@@ -282,6 +291,7 @@ function WorkItemsList({ teamId, userId, userMemberships }: { teamId: string, us
           <select value={assigneeFilter} onChange={e => setParam('assignee_id', e.target.value)}>
             <option value="">Any Assignee</option>
             <option value={userId}>Assigned to Me</option>
+            <option value="unassigned">Unassigned</option>
           </select>
           <select value={statusFilter} onChange={e => setParam('status', e.target.value)}>
             <option value="">All Statuses</option>
