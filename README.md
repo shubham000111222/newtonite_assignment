@@ -60,10 +60,10 @@ Newtonite is a workflow tracking tool demonstrating a Postgres-backed, transacti
 
 ```mermaid
 graph TD
-    UI[Frontend (Vite/React)] -->|REST| API[Fastify API]
-    API -->|Tx: Write Item + Event + Job| DB[(PostgreSQL)]
-    Worker[Background Worker] -->|FOR UPDATE SKIP LOCKED| DB
-    Worker -->|Create Notifications| DB
+    UI["Frontend (Vite/React)"] -->|REST| API["Fastify API"]
+    API -->|"Tx: Write Item + Event + Job"| DB[("PostgreSQL")]
+    Worker["Background Worker"] -->|"FOR UPDATE SKIP LOCKED"| DB
+    Worker -->|"Create Notifications"| DB
 ```
 
 ## Features
