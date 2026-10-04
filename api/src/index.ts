@@ -101,6 +101,7 @@ fastify.register(notificationsRoutes);
 fastify.register(adminRoutes);
 
 fastify.get('/api/v1/health', async (request, reply) => {
+  await pool.query('SELECT 1');
   return { status: 'ok' };
 });
 
