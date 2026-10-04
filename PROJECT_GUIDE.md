@@ -22,7 +22,7 @@ This guide documents the **actual implementation** in the repository. **Warning:
 **Folder Structure:**
 - `api/`: Fastify REST API. Entry at `src/index.ts`, core logic in `src/routes/workItems.ts`.
 - `worker/`: Background polling process (`src/index.ts`) for the transactional outbox.
-- `shared/`: Shared code, specifically `src/policy.ts` for authorization rules.
+- `shared/`: Shared code, specifically `src/policy.ts` for authorization rules and `api/src/utils/dashboardFilters.ts` for shared SQL filter definitions.
 - `web/`: React frontend. All UI is consolidated in `src/App.tsx`.
 - `migrations/`: Raw SQL schema definition.
 - `scripts/`: DB seeding.
@@ -133,13 +133,12 @@ In `workItems.ts:133` (GET item) and `workItems.ts:150` (List), if a user querie
 
 **The brief asked for:** TanStack Query, optimistic UI updates with rollback, polling, an "item updated" banner, and idempotency key reuse.
 **The actual code (`App.tsx`):**
-- Uses plain `useState` and `useEffect`.
-- On action click, it awaits the API response and blocks the UI (no optimistic updates).
-- On a `409` conflict, it uses a browser `alert()` and fully refetches the item.
-- It does **not** poll for updates or show an update banner.
-- **Critical flaw:** Line 130 sets `headers['Idempotency-Key'] = crypto.randomUUID()`. This generates a *new* key on every single retry or double-click, completely defeating the purpose of the idempotency middleware on the client side.
+- **TanStack Query is used**, including `useInfiniteQuery` for keyset pagination!
+- **No Optimistic UI**: On action click, it blocks the UI or invalidates the cache instead of mutating the local cache optimistically and rolling back on error.
+- **Conflict Handling**: On a `409` conflict, it catches the error and reports it via a Toast or alert, but doesn't implement a sophisticated review-and-merge conflict resolver.
+- **Idempotency Flaw:** The `useIdempotentMutation` hook generates a *new* UUID on every successful response, but it also generates a new key if the component remounts, which slightly diverges from perfect offline-retry idempotency caching.
 
-*How to answer when asked about this:* "Due to time constraints, I focused entirely on backend correctness, atomicity, and database transactional guarantees. I scaffolded a minimal React frontend to prove the API works, but I deferred the advanced client-side state management (TanStack Query, caching, true idempotency reuse) to a future iteration."
+*How to answer when asked about this:* "I focused heavily on backend transactional correctness and solidifying the Docker orchestration. While I integrated React Query and keyset pagination, I deferred advanced client-side optimistic rollbacks and conflict-merge UIs to a future iteration."
 
 ---
 
@@ -182,37 +181,31 @@ In `workItems.ts:133` (GET item) and `workItems.ts:150` (List), if a user querie
 ## 10. Weaknesses & Honest Limitations
 
 If pressed, admit these freely (it shows maturity):
-1. **Frontend Discrepancies (High Risk)**: The UI lacks TanStack Query, optimistic rollbacks, and true idempotency key reuse. It generates a new UUID on every click. *Answer:* "I timeboxed the frontend to focus on backend transactional correctness."
-2. **Missing Pagination in UI (Medium Risk)**: The API supports keyset pagination, but the React app just dumps the whole list.
+1. **Frontend Discrepancies (High Risk)**: The UI lacks optimistic rollbacks and true local-first idempotency key reuse.
+2. **Missing Polling/WebSockets**: The UI does not poll or listen to websockets for live updates, meaning you must refresh or perform an action to see new changes from other users.
 3. **No `idempotency_keys` TTL (Low Risk)**: The table grows infinitely. Needs a `pg_cron` cleanup job.
-4. **JWT Role Staleness (Fixed, but worth knowing)**: Roles are embedded in the JWT. I fixed this by having the `@authenticate` decorator dynamically re-fetch memberships from the DB on every request.
+4. **JWT Role Staleness (Fixed)**: Roles are embedded in the JWT, but the `@authenticate` decorator dynamically re-fetches memberships from the DB on every request.
 
 ---
 
 ## 11. Run it Step by Step
 
-**Prerequisites**: Node.js 20+, PostgreSQL 16+.
+**Prerequisites**: Docker Desktop (or equivalent)
 
-**1. Setup & Seed**
+**1. Run the entire stack in one command**
 ```bash
-npm install
-# Ensure Postgres is running locally on port 5432 with user 'postgres', password 'password'
-# (Or set DATABASE_URL environment variable)
-npm run migrate
-npm run seed
+docker compose down -v
+docker compose up --build
 ```
-*Note the seed output for login credentials.*
+*Note: The API container waits for Postgres to be healthy, automatically runs migrations, and securely seeds the database if empty. The terminal logs will print the seeded login credentials!*
 
-**2. Run Services (3 terminals)**
-```bash
-npm run dev:api     # Port 3000
-npm run dev:worker
-npm run dev:web     # Port 5173
-```
+**2. Access the Application**
+- Web UI: `http://localhost:5173`
+- The Worker and API are running safely in their respective containers.
 
-**3. Run Tests**
+**3. Run Tests (Local)**
 ```bash
-cd api && npx vitest run
+npx vitest run api/src/test/integration.test.ts
 ```
 
 **Demo Script:**
