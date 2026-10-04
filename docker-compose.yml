@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -18,11 +16,8 @@ services:
       retries: 5
 
   api:
-    image: node:20-alpine
-    working_dir: /app
-    volumes:
-      - .:/app
-    command: sh -c "npm install && npm run dev -w api"
+    build: .
+    command: sh startup.sh
     ports:
       - "3000:3000"
     environment:
@@ -31,29 +26,29 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/v1/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   worker:
-    image: node:20-alpine
-    working_dir: /app
-    volumes:
-      - .:/app
-    command: sh -c "npm install && npm run dev -w worker"
+    build: .
+    command: npm run dev -w worker
     environment:
       DATABASE_URL: postgres://postgres:password@postgres:5432/newtonite
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
 
   web:
-    image: node:20-alpine
-    working_dir: /app/web
-    volumes:
-      - .:/app
-    command: sh -c "npm install && npm run dev"
+    build: .
+    command: npm run dev -w web
     ports:
       - "5173:5173"
     environment:
       VITE_API_URL: http://localhost:3000
+      HOST: 0.0.0.0
 
 volumes:
   pgdata:

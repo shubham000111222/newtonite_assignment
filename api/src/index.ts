@@ -100,6 +100,10 @@ fastify.register(dashboardRoutes);
 fastify.register(notificationsRoutes);
 fastify.register(adminRoutes);
 
+fastify.get('/api/v1/health', async (request, reply) => {
+  return { status: 'ok' };
+});
+
 const start = async () => {
   try {
     await fastify.listen({ port: 3000, host: '0.0.0.0' });
