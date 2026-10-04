@@ -26,8 +26,8 @@ Newtonite is a workflow tracking tool demonstrating a Postgres-backed, transacti
    The app will be available at `http://localhost:5173`.
 
 3. **Manual Setup (Without Docker)**
-
-2. **Setup Database**
+   
+   **Setup Database**
    Configure your database URL (default is `postgres://postgres:password@localhost:5432/newtonite`).
    Run migrations and seed the database:
    ```bash
@@ -37,7 +37,7 @@ Newtonite is a workflow tracking tool demonstrating a Postgres-backed, transacti
 
    **Seed Data:** The seed script creates 5 teams, 20 users, and a configurable number of work items (default 10,000, controllable via `SEED_SIZE`). Look at the console output of the seed script or check the database to get a user email (e.g. `user0@example.com`, password: `password123`).
 
-3. **Run Services**
+4. **Run Services**
    Open three separate terminals and run:
    ```bash
    # Terminal 1: API
@@ -50,7 +50,7 @@ Newtonite is a workflow tracking tool demonstrating a Postgres-backed, transacti
    npm run dev:web
    ```
 
-4. **Testing**
+5. **Testing**
    Integration tests run against a real Postgres instance to verify concurrency, idempotency, and the outbox pattern.
    ```bash
    cd api && npx vitest
