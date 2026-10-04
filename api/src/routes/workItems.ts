@@ -214,13 +214,13 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
 
     // Keyset pagination using updated_at DESC, id
     if (cursor) {
-      query += ` AND (updated_at, id) < (SELECT updated_at, id FROM work_items WHERE id = $${vIdx++})`;
+      query += ` AND (w.updated_at, w.id) < (SELECT updated_at, id FROM work_items WHERE id = $${vIdx++})`;
       values.push(cursor);
     }
 
     // Must match the idx_work_items_team_status_prio_updated index if possible,
     // but a general order by updated_at DESC is required for keyset pagination.
-    query += ` ORDER BY updated_at DESC, id DESC LIMIT $${vIdx++}`;
+    query += ` ORDER BY w.updated_at DESC, w.id DESC LIMIT $${vIdx++}`;
     values.push(parseInt(limit));
 
     const { rows } = await pool.query(query, values);
