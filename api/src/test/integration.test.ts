@@ -331,4 +331,23 @@ describe('Integration tests', () => {
     expect(items2[1].content).toBe('C4');
   });
 
+  it('Claiming a closed item is rejected with a clear error', async () => {
+    if (!pool) return;
+    const teamRes = await pool.query("INSERT INTO teams (name) VALUES ('Test Team Closed') RETURNING id");
+    const teamId = teamRes.rows[0].id;
+    const userRes = await pool.query("INSERT INTO users (email, password_hash, name) VALUES ('u_closed@x.com', 'h', 'U') RETURNING id");
+    const userId = userRes.rows[0].id;
+    await pool.query("INSERT INTO memberships (user_id, team_id, role) VALUES ($1, $2, 'member')", [userId, teamId]);
+    const itemRes = await pool.query("INSERT INTO work_items (team_id, title, status, priority, created_by) VALUES ($1, 'Closed Task', 'closed', 'low', $2) RETURNING id", [teamId, userId]);
+    const itemId = itemRes.rows[0].id;
+    const token = app.jwt.sign({ id: userId, name: 'U', memberships: { [teamId]: 'member' } });
+    const res = await app.inject({
+      method: 'POST',
+      url: "/api/v1/work-items/" + itemId + "/claim",
+      headers: { 'idempotency-key': 'test-claim-closed', authorization: "Bearer " + token },
+      payload: { version: 0 }
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.message).toBe('Item is already closed');
+  });
 });
