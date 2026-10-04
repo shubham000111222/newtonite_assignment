@@ -112,6 +112,7 @@ function Login({ setToken }: { setToken: (t: string) => void }) {
       body: JSON.stringify({ email, password })
     }),
     onSuccess: (data) => {
+      localStorage.removeItem('team_id');
       localStorage.setItem('token', data.token);
       setToken(data.token);
     }
@@ -188,7 +189,7 @@ function Dashboard({ teamId, userId }: { teamId: string, userId: string }) {
   );
 }
 
-function WorkItemsList({ teamId, userId }: { teamId: string, userId: string }) {
+function WorkItemsList({ teamId, userId, userMemberships }: { teamId: string, userId: string, userMemberships: Record<string, string> }) {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   
@@ -201,6 +202,7 @@ function WorkItemsList({ teamId, userId }: { teamId: string, userId: string }) {
   const [isCreating, setIsCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [createTeamId, setCreateTeamId] = useState(teamId || Object.keys(userMemberships)[0] || '');
   const [toastMsg, setToastMsg] = useState('');
 
   const { 
@@ -228,7 +230,7 @@ function WorkItemsList({ teamId, userId }: { teamId: string, userId: string }) {
       method: 'POST',
       headers: { 'Idempotency-Key': vars.idempotencyKey },
       body: JSON.stringify({
-        team_id: teamId,
+        team_id: createTeamId,
         title: newTitle,
         description: newDesc,
         type: 'task',
@@ -308,6 +310,15 @@ function WorkItemsList({ teamId, userId }: { teamId: string, userId: string }) {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
           <form className="card flex-col gap-4" style={{ width: 500 }} onSubmit={(e) => { e.preventDefault(); createMutation.mutate({}); }}>
             <h2 className="text-xl">Create New Item</h2>
+            <div className="flex-col gap-2">
+              <label className="text-sm text-muted">Team</label>
+              <select required value={createTeamId} onChange={e => setCreateTeamId(e.target.value)} disabled={createMutation.isPending}>
+                <option value="" disabled>Select a team</option>
+                {Object.keys(userMemberships).map(id => (
+                  <option key={id} value={id}>{id.substring(0,8)}</option>
+                ))}
+              </select>
+            </div>
             <div className="flex-col gap-2">
               <label className="text-sm text-muted">Title</label>
               <input required value={newTitle} onChange={e => setNewTitle(e.target.value)} disabled={createMutation.isPending} placeholder="E.g., Update database credentials" />
@@ -634,6 +645,7 @@ function ItemComments({ id, allowedActions }: { id: string, allowedActions: stri
 
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || '');
+  const [selectedTeam, setSelectedTeam] = useState(localStorage.getItem('team_id') || '');
   const location = useLocation();
   const queryClient = useQueryClient();
 
@@ -648,15 +660,34 @@ export default function App() {
     if (!token) queryClient.clear();
   }, [token, queryClient]);
 
+  useEffect(() => {
+    if (user && selectedTeam && !user.user.memberships[selectedTeam]) {
+      setSelectedTeam('');
+      localStorage.removeItem('team_id');
+    }
+  }, [user, selectedTeam]);
+
   if (!token) return <Login setToken={setToken} />;
   if (isLoading) return <div className="layout"><div className="content"><LoadingSpinner /></div></div>;
   if (!user) {
     localStorage.removeItem('token');
+    localStorage.removeItem('team_id');
     setToken('');
     return null;
   }
 
-  const teamId = Object.keys(user.user.memberships)[0];
+  const handleTeamChange = (t: string) => {
+    setSelectedTeam(t);
+    if (t) localStorage.setItem('team_id', t);
+    else localStorage.removeItem('team_id');
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('team_id');
+    setToken('');
+    queryClient.clear();
+  };
 
   return (
     <div className="layout">
@@ -665,17 +696,28 @@ export default function App() {
           <h2 className="text-xl" style={{ color: 'var(--primary-hover)', fontWeight: 700, letterSpacing: '-0.05em' }}>Newtonite</h2>
           <div className="text-sm text-muted mt-1">{user.user.name}</div>
         </div>
+        
+        <div className="mb-6">
+          <label className="text-xs text-muted uppercase tracking-wider mb-2 block">Team</label>
+          <select value={selectedTeam} onChange={e => handleTeamChange(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+            <option value="">All My Teams</option>
+            {Object.keys(user.user.memberships).map(id => (
+              <option key={id} value={id}>{id.substring(0,8)}</option>
+            ))}
+          </select>
+        </div>
+
         <Link to="/" className={location.pathname === '/' ? 'active' : ''}><LayoutDashboard size={18} /> Dashboard</Link>
         <Link to="/items" className={location.pathname.startsWith('/items') ? 'active' : ''}><List size={18} /> Work Items</Link>
         <div style={{ flex: 1 }} />
-        <button className="flex items-center gap-2" style={{ background: 'transparent', color: 'var(--danger-hover)', justifyContent: 'flex-start', border: 'none' }} onClick={() => { localStorage.removeItem('token'); setToken(''); }}>
+        <button className="flex items-center gap-2" style={{ background: 'transparent', color: 'var(--danger-hover)', justifyContent: 'flex-start', border: 'none' }} onClick={handleLogout}>
           <LogOut size={18} /> Sign Out
         </button>
       </div>
       <div className="content">
         <Routes>
-          <Route path="/" element={<Dashboard teamId={teamId} userId={user.user.id} />} />
-          <Route path="/items" element={<WorkItemsList teamId={teamId} userId={user.user.id} />} />
+          <Route path="/" element={<Dashboard teamId={selectedTeam} userId={user.user.id} />} />
+          <Route path="/items" element={<WorkItemsList teamId={selectedTeam} userId={user.user.id} userMemberships={user.user.memberships} />} />
           <Route path="/items/:id" element={<WorkItemDetail />} />
         </Routes>
       </div>

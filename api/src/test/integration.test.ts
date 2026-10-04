@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
 import Fastify from 'fastify';
 import workItemsRoutes from '../routes/workItems';
+import dashboardRoutes from '../routes/dashboard';
 
 // Note: These tests are designed to run against a real Postgres database.
 // They cover the critical paths required by the problem statement.
@@ -32,6 +33,7 @@ describe('Integration tests', () => {
       });
       
       await app.register(workItemsRoutes);
+      await app.register(dashboardRoutes);
       await app.ready();
     }
   });
@@ -350,4 +352,25 @@ describe('Integration tests', () => {
     expect(res.statusCode).toBe(403);
     expect(res.json().error.message).toBe('Item is already closed');
   });
+
+
+  it('Dashboard returns data for user without team_id and 404 for invalid team_id', async () => {
+    if (!pool) return;
+    // 1. Dashboard with no team_id
+    const resAll = await app.inject({
+      method: 'GET',
+      url: '/api/v1/dashboard'
+    });
+    expect(resAll.statusCode).toBe(200);
+    const dataAll = JSON.parse(resAll.body);
+    expect(dataAll).toHaveProperty('assignedToMe');
+
+    // 2. Dashboard with invalid team_id
+    const resInvalid = await app.inject({
+      method: 'GET',
+      url: '/api/v1/dashboard?team_id=00000000-0000-0000-0000-000000000000'
+    });
+    expect(resInvalid.statusCode).toBe(404);
+  });
 });
+

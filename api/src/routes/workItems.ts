@@ -175,17 +175,25 @@ export default async function workItemsRoutes(fastify: FastifyInstance) {
     const { team_id, status, priority, assignee_id, type, overdue, q, cursor, limit = 50 } = req.query as any;
 
     // Cross-team → 404 (do not leak existence)
-    if (!team_id || !user.memberships[team_id]) {
-      return reply.status(404).send({ error: { message: 'Not found' } });
+    let teamIds = Object.keys(user.memberships);
+    if (team_id) {
+      if (!user.memberships[team_id]) {
+        return reply.status(404).send({ error: { message: 'Not found' } });
+      }
+      teamIds = [team_id];
+    }
+
+    if (teamIds.length === 0) {
+      return { items: [], nextCursor: null };
     }
 
     let query = `
       SELECT w.*, u.name as assignee_name 
       FROM work_items w 
       LEFT JOIN users u ON w.assignee_id = u.id 
-      WHERE w.team_id = $1
+      WHERE w.team_id = ANY($1)
     `;
-    const values: any[] = [team_id];
+    const values: any[] = [teamIds];
     let vIdx = 2;
 
     if (status) {
