@@ -11,3 +11,5 @@ COPY shared/package.json ./shared/
 RUN npm ci
 
 COPY . .
+
+RUN sed -i 's/\r$//' /app/startup.sh && chmod +x /app/startup.sh
