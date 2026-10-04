@@ -34,10 +34,10 @@ This guide documents the **actual implementation** in the repository. **Warning:
 
 ```mermaid
 graph TD
-    UI[Frontend Web App] -->|HTTP REST| API[Fastify API]
-    API -->|Tx: UPDATE item + INSERT event + INSERT job| DB[(PostgreSQL)]
-    Worker[Node Worker Process] -->|SELECT ... FOR UPDATE SKIP LOCKED| DB
-    Worker -->|Process job & INSERT notifications| DB
+    UI["Frontend Web App"] -->|"HTTP REST"| API["Fastify API"]
+    API -->|"Tx: UPDATE item + INSERT event + INSERT job"| DB[("PostgreSQL")]
+    Worker["Node Worker Process"] -->|"SELECT ... FOR UPDATE SKIP LOCKED"| DB
+    Worker -->|"Process job & INSERT notifications"| DB
 ```
 
 ---
